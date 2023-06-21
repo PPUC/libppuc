@@ -93,7 +93,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
     if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         add_library(ppuc_static STATIC ${LIBRARY_SOURCES})
-        set_target_properties(ppuc_static PROPERTIES OUTPUT_NAME "ppuc")
+        set_target_properties(ppuc_static PROPERTIES OUTPUT_NAME ${LIB_NAME})
         target_include_directories(ppuc_static PUBLIC ${INCLUDE_DIRS})
         target_link_libraries(ppuc_static LINK_PUBLIC yaml-cpp)
         install(TARGETS ppuc_static

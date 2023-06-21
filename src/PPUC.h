@@ -54,12 +54,15 @@ public:
 
    void LoadConfiguration(const char *configFile);
    void SetDebug(bool debug);
+   bool GetDebug();
    void SetRom(const char *rom);
+   const char * GetRom();
    void SetSerial(const char *serial);
-   void Connect();
+   bool Connect();
    void Disconnect();
 
    void SetSolenoidState(int number, int state);
+   void SetLampState(int number, int state);
    PPUCSwitchState* GetNextSwitchState();
 
 private:

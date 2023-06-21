@@ -46,9 +46,19 @@ void PPUC::SetDebug(bool debug)
    m_debug = debug;
 }
 
+bool PPUC::GetDebug()
+{
+   return m_debug;
+}
+
 void PPUC::SetRom(const char *rom)
 {
    strcpy(m_rom, rom);
+}
+
+const char *PPUC::GetRom()
+{
+   return m_rom;
 }
 
 void PPUC::SetSerial(const char *serial)
@@ -56,7 +66,7 @@ void PPUC::SetSerial(const char *serial)
    strcpy(m_serial, serial);
 }
 
-void PPUC::Connect()
+bool PPUC::Connect()
 {
    if (m_pRS485Comm->Connect(m_serial))
    {
@@ -166,13 +176,28 @@ void PPUC::Connect()
       m_pRS485Comm->QueueEvent(new Event(EVENT_READ_SWITCHES, 1));
 
       m_pRS485Comm->Run();
+
+      return true;
    }
+
+   return false;
 }
 
 void PPUC::SetSolenoidState(int number, int state)
-{}
+{
+   uint16_t solNo = number;
+   uint8_t solState = state == 0 ? 0 : 1;
+   m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_SOLENOID, solNo, solState));
+}
 
-PPUCSwitchState* PPUC::GetNextSwitchState()
+void PPUC::SetLampState(int number, int state)
+{
+   uint16_t lampNo = number;
+   uint8_t lampState = state == 0 ? 0 : 1;
+   m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_LIGHT, lampNo, lampState));
+}
+
+PPUCSwitchState *PPUC::GetNextSwitchState()
 {
    return m_pRS485Comm->GetNextSwitchState();
 }

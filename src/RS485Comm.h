@@ -78,8 +78,9 @@ private:
    uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
    uint8_t m_switchBoardCounter = 0;
 
-   // Event message buffer
-   uint8_t m_msg[11] = {255};
+   // Event message buffers, we need two independent for events and config events because of threading.
+   uint8_t m_msg[6] = {255};
+   uint8_t m_cmsg[11] = {255};
 
    SerialPort m_serialPort;
    std::thread *m_pThread;

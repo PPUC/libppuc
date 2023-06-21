@@ -43,35 +43,34 @@ void RS485Comm::Run()
 {
    m_pThread = new std::thread([this]()
                                {
-                                  LogMessage("RS485Comm run thread starting");
+      LogMessage("RS485Comm run thread starting");
 
-                                  bool sleep = false;
+      int i = 0;
+      while (m_serialPort.IsOpen())
+      {
+         m_eventQueueMutex.lock();
 
-                                  while (m_serialPort.IsOpen())
-                                  {
-                                     m_eventQueueMutex.lock();
+         if (!m_events.empty())
+         {
+            Event *event = m_events.front();
+            m_events.pop();
+            m_eventQueueMutex.unlock();
 
-                                     if (m_events.empty())
-                                     {
-                                        m_eventQueueMutex.unlock();
-                                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                                        continue;
-                                     }
+            SendEvent(event);
+         }
+         else
+         {
+            m_eventQueueMutex.unlock();
+         }
 
-                                     Event *event = m_events.front();
-                                     m_events.pop();
-                                     m_eventQueueMutex.unlock();
+         PollEvents(i++);
+         if (i > m_switchBoardCounter)
+            i = 0;
 
-                                    SendEvent(event);
+         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
 
-                                    // @todo millis or one board per run
-                                    for (int i = 0; i < m_switchBoardCounter; i++)
-                                    {
-                                       PollEvents(i);
-                                    }
-                                  }
-
-                                  LogMessage("RS485Comm run thread finished"); });
+      LogMessage("RS485Comm run thread finished"); });
 }
 
 void RS485Comm::QueueEvent(Event *event)
@@ -130,15 +129,15 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
    if (m_serialPort.IsOpen())
    {
       //       = (UINT8) 255;
-      m_msg[1] = event->sourceId;
-      m_msg[2] = event->boardId;
-      m_msg[3] = event->topic;
-      m_msg[4] = event->key;
-      m_msg[5] = event->index;
-      m_msg[6] = event->value >> 24;
-      m_msg[7] = (event->value >> 16) & 0xff;
-      m_msg[8] = (event->value >> 8) & 0xff;
-      m_msg[9] = event->value & 0xff;
+      m_cmsg[1] = event->sourceId;
+      m_cmsg[2] = event->boardId;
+      m_cmsg[3] = event->topic;
+      m_cmsg[4] = event->key;
+      m_cmsg[5] = event->index;
+      m_cmsg[6] = event->value >> 24;
+      m_cmsg[7] = (event->value >> 16) & 0xff;
+      m_cmsg[8] = (event->value >> 8) & 0xff;
+      m_cmsg[9] = event->value & 0xff;
       //       = (UINT8) 255;
 
       delete event;
