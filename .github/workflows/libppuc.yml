@@ -1,0 +1,149 @@
+name: libppuc
+on:
+  push:
+
+  pull_request:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: Detect version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - id: version
+        run: |
+          VERSION_MAJOR=$(grep -Eo "ZEDMD_VERSION_MAJOR\s+[0-9]+" src/PPUC.h | grep -Eo "[0-9]+")
+          VERSION_MINOR=$(grep -Eo "ZEDMD_VERSION_MINOR\s+[0-9]+" src/PPUC.h | grep -Eo "[0-9]+")
+          VERSION_PATCH=$(grep -Eo "ZEDMD_VERSION_PATCH\s+[0-9]+" src/PPUC.h | grep -Eo "[0-9]+")
+          TAG="${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}"
+          echo "${TAG}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build libppuc-${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    needs: [ version ]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win-x64
+            platform-name: x64
+          - os: windows-latest
+            platform: win-x86
+            platform-name: Win32
+          - os: macos-latest
+            platform: macOS-x64
+          - os: macos-latest
+            platform: macOS-arm64
+          - os: macos-latest
+            platform: ios-arm64
+          - os: macos-latest
+            platform: tvos-arm64
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: ubuntu-latest
+            platform: android-arm64-v8a
+    steps:
+      - uses: actions/checkout@v3
+      - if: matrix.os == 'ubuntu-latest' && matrix.type != 'raspi'
+        run: |
+          sudo apt-get update
+          sudo apt-get install libyaml-cpp-dev
+      - if: matrix.os == 'macos-latest'
+        run: |
+          brew install yaml-cpp
+      - if: matrix.os == 'windows-latest'
+        uses: lukka/run-vcpkg@v7.4
+        with:
+          vcpkgArguments: yaml-cpp
+          vcpkgTriplet: ${{ matrix.platform-name }}-windows
+          vcpkgDirectory: deps/vcpkg
+          vcpkgGitCommitId: ce99c947b64ea3c0e274e18cc3035ca727681089
+      - name: Build libppuc-${{ matrix.platform }}
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            if [[ "${{ matrix.platform-name }}" == "Win32" ]]; then
+              cmake -G "Visual Studio 17 2022" -A ${{ matrix.platform-name }} -B build -DUSE_WIN32=ON
+            else
+              cmake -G "Visual Studio 17 2022" -A ${{ matrix.platform-name }} -B build
+            fi
+            cmake --build build --config Release
+          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            if [[ "${{ matrix.platform }}" == "macOS-arm64" ]]; then
+              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_OSXARM=ON
+            elif [[ "${{ matrix.platform }}" == "macOS-x64" ]]; then
+              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_OSXINTEL=ON
+            elif  [[ "${{ matrix.platform }}" == "ios-arm64" ]]; then
+              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_IOS=ON
+            elif  [[ "${{ matrix.platform }}" == "tvos-arm64" ]]; then
+              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_TVOS=ON
+            fi
+            cmake --build build/Release
+          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            if [[ "${{ matrix.platform }}" == "android-arm64-v8a" ]]; then
+              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_ANDROID=ON
+            else
+              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release
+            fi
+            cmake --build build/Release
+          fi
+      - run: |
+          mkdir tmp
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+             cp build/Release/ppuc* tmp
+          else
+             cp build/Release/libppuc* tmp
+          fi
+      - uses: actions/upload-artifact@v3
+        with:
+          name: libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}
+          path: tmp
+
+  post-build:
+    runs-on: macos-latest
+    needs: [ version, build ]
+    name: Build libppuc-macOS
+    steps:
+      - uses: actions/download-artifact@v3
+      - run: |
+          mkdir libppuc-${{ needs.version.outputs.tag }}-macOS
+          lipo -create -output libppuc-${{ needs.version.outputs.tag }}-macOS/libppuc.dylib \
+             libppuc-${{ needs.version.outputs.tag }}-macOS-x64/libppuc.dylib \
+             libppuc-${{ needs.version.outputs.tag }}-macOS-arm64/libppuc.dylib
+      - uses: actions/upload-artifact@v3
+        with:
+          name: libppuc-${{ needs.version.outputs.tag }}-macOS
+          path: libppuc-${{ needs.version.outputs.tag }}-macOS
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          zip -r libppuc-${{ needs.version.outputs.tag }}-win-x64.zip libppuc-${{ needs.version.outputs.tag }}-win-x64
+          zip -r libppuc-${{ needs.version.outputs.tag }}-win-x86.zip  libppuc-${{ needs.version.outputs.tag }}-win-x86
+          zip -r libppuc-${{ needs.version.outputs.tag }}-ios-arm64.zip  libppuc-${{ needs.version.outputs.tag }}-ios-arm64
+          zip -r libppuc-${{ needs.version.outputs.tag }}-tvos-arm64.zip  libppuc-${{ needs.version.outputs.tag }}-tvos-arm64
+          zip -r libppuc-${{ needs.version.outputs.tag }}-linux-x64.zip  libppuc-${{ needs.version.outputs.tag }}-linux-x64
+          zip -r libppuc-${{ needs.version.outputs.tag }}-android-arm64-v8a.zip  libppuc-${{ needs.version.outputs.tag }}-android-arm64-v8a
+          zip -r libppuc-${{ needs.version.outputs.tag }}-macOS.zip  libppuc-${{ needs.version.outputs.tag }}-macOS
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          draft: true
+          files: |
+            libppuc-${{ needs.version.outputs.tag }}-win-x64.zip
+            libppuc-${{ needs.version.outputs.tag }}-win-x86.zip
+            libppuc-${{ needs.version.outputs.tag }}-ios-arm64.zip
+            libppuc-${{ needs.version.outputs.tag }}-tvos-arm64.zip
+            libppuc-${{ needs.version.outputs.tag }}-linux-x64.zip
+            libppuc-${{ needs.version.outputs.tag }}-android-arm64-v8a.zip
+            libppuc-${{ needs.version.outputs.tag }}-macOS.zip
