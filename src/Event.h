@@ -6,10 +6,10 @@
 #ifndef EVENT_h
 #define EVENT_h
 
-#define PLATFORM_WPC           1
-#define PLATFORM_DATA_EAST     2
-#define PLATFORM_SYS11         3
-#define PLATFORM_LIBPINMAME    100
+#define PLATFORM_WPC        1
+#define PLATFORM_DATA_EAST  2
+#define PLATFORM_SYS11      3
+#define PLATFORM_LIBPINMAME 100
 
 #define EVENT_SOURCE_ANY      42 // "*"
 #define EVENT_SOURCE_DEBUG    66 // "B" Debug
@@ -26,37 +26,48 @@
 #define EVENT_SOURCE_SOLENOID 83 // "S" VPX/DOF/PUP includes flashers
 #define EVENT_SOURCE_SWITCH   87 // "W" VPX/DOF/PUP
 
-#define CONFIG_TOPIC_LAMPS    108 // "l"
-#define CONFIG_TOPIC_MECHS    109 // "m"
-#define CONFIG_TOPIC_PWM      112 // "p"
-#define CONFIG_TOPIC_SWITCHES 115 // "s"
+#define CONFIG_TOPIC_LED_STRING 103 // "g"
+#define CONFIG_TOPIC_LAMPS      108 // "l"
+#define CONFIG_TOPIC_MECHS      109 // "m"
+#define CONFIG_TOPIC_PWM        112 // "p"
+#define CONFIG_TOPIC_SWITCHES   115 // "s"
 
 #define CONFIG_TOPIC_HOLD_POWER_ACTIVATION_TIME 65 // "A"
+#define CONFIG_TOPIC_BRIGHTNESS                 66 // "B"
+#define CONFIG_TOPIC_COLOR                      67 // "C"
 #define CONFIG_TOPIC_FAST_SWITCH                70 // "F"
+#define CONFIG_TOPIC_AFTER_GLOW                 71 // "G"
 #define CONFIG_TOPIC_HOLD_POWER                 72 // "H"
+#define CONFIG_TOPIC_LED_NUMBER                 76 // "L"
 #define CONFIG_TOPIC_MAX_PULSE_TIME             77 // "M"
 #define CONFIG_TOPIC_NUMBER                     78 // "N"
+#define CONFIG_TOPIC_AMOUNT_LEDS                79 // "O"
 #define CONFIG_TOPIC_PORT                       80 // "P"
 #define CONFIG_TOPIC_MIN_PULSE_TIME             84 // "T"
+#define CONFIG_TOPIC_LIGHT_UP                   85 // "U"
 #define CONFIG_TOPIC_POWER                      87 // "W"
 #define CONFIG_TOPIC_TYPE                       89 // "Y"
 
-typedef unsigned char UINT8;
-typedef unsigned short UINT16;
-typedef unsigned int UINT32;
+#define PWM_TYPE_SOLENOID 1 // Coil
+#define PWM_TYPE_FLASHER  2 // Flasher
+#define PWM_TYPE_LAMP     3 // Lamp
+
+#define LED_TYPE_GI       1 // GI
+#define LED_TYPE_FLASHER  2 // Flasher
+#define LED_TYPE_LAMP     3 // Lamp
 
 struct Event {
-    UINT8 sourceId;
-    UINT16 eventId;
-    UINT8 value;
+    uint8_t sourceId;
+    uint16_t eventId;
+    uint8_t value;
 
-    Event(UINT8 sId, UINT16 eId) {
+    Event(uint8_t sId, uint16_t eId) {
         sourceId = sId;
         eventId = eId;
         value = 1;
     }
 
-    Event(UINT8 sId, UINT16 eId, UINT8 v) {
+    Event(uint8_t sId, uint16_t eId, uint8_t v) {
         sourceId = sId;
         eventId = eId;
         value = v;
@@ -74,14 +85,14 @@ struct Event {
 };
 
 struct ConfigEvent {
-    UINT8 sourceId; // EVENT_CONFIGURATION
-    UINT8 boardId;  //
-    UINT8 topic;    // lamps
-    UINT8 index;    // 0, index of assignment
-    UINT8 key;      // ledType, assignment/brightness
-    UINT32 value;   // FFFF00FF
+    uint8_t sourceId; // EVENT_CONFIGURATION
+    uint8_t boardId;  //
+    uint8_t topic;    // lamps
+    uint8_t index;    // 0, index of assignment
+    uint8_t key;      // ledType, assignment/brightness
+    uint32_t value;   // FFFF00FF
 
-    ConfigEvent(UINT8 b, UINT8 t, UINT8 i, UINT8 k, UINT32 v) {
+    ConfigEvent(uint8_t b, uint8_t t, uint8_t i, uint8_t k, uint32_t v) {
         sourceId = EVENT_CONFIGURATION;
         boardId = b;
         topic = t;

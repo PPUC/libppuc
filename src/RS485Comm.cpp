@@ -128,7 +128,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 {
    if (m_serialPort.IsOpen())
    {
-      //       = (UINT8) 255;
+      //       = (uint8_t) 255;
       m_cmsg[1] = event->sourceId;
       m_cmsg[2] = event->boardId;
       m_cmsg[3] = event->topic;
@@ -138,7 +138,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
       m_cmsg[7] = (event->value >> 16) & 0xff;
       m_cmsg[8] = (event->value >> 8) & 0xff;
       m_cmsg[9] = event->value & 0xff;
-      //       = (UINT8) 255;
+      //       = (uint8_t) 255;
 
       delete event;
 
@@ -152,12 +152,12 @@ bool RS485Comm::SendEvent(Event *event)
 {
    if (m_serialPort.IsOpen())
    {
-      //       = (UINT8) 255;
+      //       = (uint8_t) 255;
       m_msg[1] = event->sourceId;
       m_msg[2] = event->eventId >> 8;
       m_msg[3] = event->eventId & 0xff;
       m_msg[4] = event->value;
-      //       = (UINT8) 255;
+      //       = (uint8_t) 255;
 
       return m_serialPort.WriteBytes(m_msg, 6);
    }
@@ -183,7 +183,7 @@ Event *RS485Comm::receiveEvent()
             {
                if (poll[0] == 255 && poll[5] == 255)
                {
-                  return new Event(poll[1], (((UINT16)poll[2]) << 8) + poll[3], poll[4]);
+                  return new Event(poll[1], (((uint16_t)poll[2]) << 8) + poll[3], poll[4]);
                }
             }
             return nullptr;
