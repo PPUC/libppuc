@@ -117,6 +117,13 @@ bool PPUC::Connect()
       const YAML::Node &boards = m_ppucConfig["boards"];
       for (YAML::Node n_board : boards)
       {
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            n_board["number"].as<uint8_t>(),
+            (uint8_t)CONFIG_TOPIC_PLATFORM,
+            0,
+            (uint8_t)CONFIG_TOPIC_PLATFORM,
+            n_board["platform"].as<uint32_t>()));
+
          if (n_board["pollEvents"].as<bool>())
          {
             m_pRS485Comm->RegisterSwitchBoard(n_board["number"].as<uint8_t>());
