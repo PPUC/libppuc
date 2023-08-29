@@ -4,6 +4,9 @@
 
 PPUC::PPUC()
 {
+   m_rom = (char *) malloc(16);
+   m_serial = (char *) malloc(128);
+
    m_pRS485Comm = new RS485Comm();
 }
 

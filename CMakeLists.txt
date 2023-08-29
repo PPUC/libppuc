@@ -58,6 +58,7 @@ else()
 endif()
 
 find_package(yaml-cpp REQUIRED)
+link_directories(${YAML_CPP_LIBRARY_DIR})
 
 set(LIBRARY_SOURCES
    ${SERIALIB_SOURCES}
@@ -76,8 +77,6 @@ set(INCLUDE_DIRS
 
 include_directories(AFTER src)
 
-link_directories(${YAML_CPP_LIBRARY_DIR})
-
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
    if(NOT USE_IOS AND NOT USE_TVOS)
       add_library(ppuc_shared SHARED ${LIBRARY_SOURCES})
@@ -92,7 +91,6 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
       )
    endif()
 
-
    add_library(ppuc_static STATIC ${LIBRARY_SOURCES})
    set_target_properties(ppuc_static PROPERTIES OUTPUT_NAME ${LIB_NAME})
    target_include_directories(ppuc_static PUBLIC ${INCLUDE_DIRS})
@@ -103,6 +101,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
    install(FILES src/PPUC.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
 
 else()
-   include_directories(AFTER src)
    add_library(PPUC ${LIBRARY_SOURCES})
+   target_include_directories(PPUC PUBLIC ${INCLUDE_DIRS})
+   target_link_libraries(PPUC LINK_PUBLIC ${YAML_CPP_LIBRARIES})
 endif()
