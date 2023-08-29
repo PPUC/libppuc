@@ -34,13 +34,13 @@ if(USE_OSXARM)
 elseif(USE_OSXINTEL)
    set(CMAKE_OSX_ARCHITECTURES x86_64)
 elseif(USE_IOS OR USE_TVOS)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET 16.0)
-  set(CMAKE_OSX_ARCHITECTURES arm64)
-  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-  set(CMAKE_C_FLAGS -fembed-bitcode)
-  set(CMAKE_CXX_FLAGS -fembed-bitcode)
+   set(CMAKE_OSX_DEPLOYMENT_TARGET 16.0)
+   set(CMAKE_OSX_ARCHITECTURES arm64)
+   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+   set(CMAKE_C_FLAGS -fembed-bitcode)
+   set(CMAKE_CXX_FLAGS -fembed-bitcode)
 elseif(USE_WIN32)
-  add_compile_definitions(WIN32)
+   add_compile_definitions(WIN32)
 elseif(USE_ANDROID)
 endif()
 
@@ -51,13 +51,13 @@ set(CMAKE_C_VISIBILITY_PRESET hidden)
 
 if(USE_ANDROID)
 else()
-    set(SERIALIB_SOURCES
+   set(SERIALIB_SOURCES
       src/serialib/serialib.h
       src/serialib/serialib.cpp
-    )
+   )
 endif()
 
-find_package(yaml-cpp)
+find_package(yaml-cpp REQUIRED)
 
 set(LIBRARY_SOURCES
    ${SERIALIB_SOURCES}
@@ -71,38 +71,38 @@ set(LIBRARY_SOURCES
 
 set(INCLUDE_DIRS
    src
- )
+   ${YAML_CPP_INCLUDE_DIR}
+)
 
 include_directories(AFTER src)
 
+link_directories(${YAML_CPP_LIBRARY_DIR})
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    if(NOT USE_IOS AND NOT USE_TVOS)
-       add_library(ppuc_shared SHARED ${LIBRARY_SOURCES})
-       set_target_properties(ppuc_shared PROPERTIES
-          OUTPUT_NAME ${LIB_NAME}
-          VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}
-          LINK_FLAGS_RELEASE -s
-       )
-       target_include_directories(ppuc_shared PUBLIC ${INCLUDE_DIRS})
-       target_link_libraries(ppuc_shared LINK_PUBLIC yaml-cpp)
-       install(TARGETS ppuc_shared
-          LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-       )
-    endif()
+   if(NOT USE_IOS AND NOT USE_TVOS)
+      add_library(ppuc_shared SHARED ${LIBRARY_SOURCES})
+      set_target_properties(ppuc_shared PROPERTIES
+         OUTPUT_NAME ${LIB_NAME}
+         VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}
+      )
+      target_include_directories(ppuc_shared PUBLIC ${INCLUDE_DIRS})
+      target_link_libraries(ppuc_shared LINK_PUBLIC ${YAML_CPP_LIBRARIES})
+      install(TARGETS ppuc_shared
+         LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+      )
+   endif()
 
 
-    if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-        add_library(ppuc_static STATIC ${LIBRARY_SOURCES})
-        set_target_properties(ppuc_static PROPERTIES OUTPUT_NAME ${LIB_NAME})
-        target_include_directories(ppuc_static PUBLIC ${INCLUDE_DIRS})
-        target_link_libraries(ppuc_static LINK_PUBLIC yaml-cpp)
-        install(TARGETS ppuc_static
-           LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-        )
-        install(FILES src/PPUC.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
-    endif()
+   add_library(ppuc_static STATIC ${LIBRARY_SOURCES})
+   set_target_properties(ppuc_static PROPERTIES OUTPUT_NAME ${LIB_NAME})
+   target_include_directories(ppuc_static PUBLIC ${INCLUDE_DIRS})
+   target_link_libraries(ppuc_static LINK_PUBLIC ${YAML_CPP_LIBRARIES})
+   install(TARGETS ppuc_static
+      LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+   )
+   install(FILES src/PPUC.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
 
 else()
-    include_directories(AFTER src)
-    add_library(PPUC ${LIBRARY_SOURCES})
+   include_directories(AFTER src)
+   add_library(PPUC ${LIBRARY_SOURCES})
 endif()

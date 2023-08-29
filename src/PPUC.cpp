@@ -72,41 +72,41 @@ void PPUC::SendLedConfigBlock(const YAML::Node &items, uint32_t type, uint8_t bo
    {
       uint8_t index = 0;
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-         board,
-         (uint8_t)CONFIG_TOPIC_LAMPS,
-         index++,
-         (uint8_t)CONFIG_TOPIC_PORT,
-         port));
+          board,
+          (uint8_t)CONFIG_TOPIC_LAMPS,
+          index++,
+          (uint8_t)CONFIG_TOPIC_PORT,
+          port));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-         board,
-         (uint8_t)CONFIG_TOPIC_LAMPS,
-         index++,
-         (uint8_t)CONFIG_TOPIC_TYPE,
-         type));
+          board,
+          (uint8_t)CONFIG_TOPIC_LAMPS,
+          index++,
+          (uint8_t)CONFIG_TOPIC_TYPE,
+          type));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-         board,
-         (uint8_t)CONFIG_TOPIC_LAMPS,
-         index++,
-         (uint8_t)CONFIG_TOPIC_NUMBER,
-         n_item["number"].as<uint32_t>()));
+          board,
+          (uint8_t)CONFIG_TOPIC_LAMPS,
+          index++,
+          (uint8_t)CONFIG_TOPIC_NUMBER,
+          n_item["number"].as<uint32_t>()));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-         board,
-         (uint8_t)CONFIG_TOPIC_LAMPS,
-         index++,
-         (uint8_t)CONFIG_TOPIC_LED_NUMBER,
-         n_item["ledNumber"].as<uint32_t>()));
+          board,
+          (uint8_t)CONFIG_TOPIC_LAMPS,
+          index++,
+          (uint8_t)CONFIG_TOPIC_LED_NUMBER,
+          n_item["ledNumber"].as<uint32_t>()));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-         board,
-         (uint8_t)CONFIG_TOPIC_LAMPS,
-         index++,
-         (uint8_t)CONFIG_TOPIC_BRIGHTNESS,
-         n_item["brightness"].as<uint32_t>()));
+          board,
+          (uint8_t)CONFIG_TOPIC_LAMPS,
+          index++,
+          (uint8_t)CONFIG_TOPIC_BRIGHTNESS,
+          n_item["brightness"].as<uint32_t>()));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-         board,
-         (uint8_t)CONFIG_TOPIC_LAMPS,
-         index++,
-         (uint8_t)CONFIG_TOPIC_COLOR,
-         n_item["color"].as<uint32_t>()));
+          board,
+          (uint8_t)CONFIG_TOPIC_LAMPS,
+          index++,
+          (uint8_t)CONFIG_TOPIC_COLOR,
+          n_item["color"].as<uint32_t>()));
    }
 }
 
@@ -114,15 +114,17 @@ bool PPUC::Connect()
 {
    if (m_pRS485Comm->Connect(m_serial))
    {
+      uint8_t index = 0;
+
       const YAML::Node &boards = m_ppucConfig["boards"];
       for (YAML::Node n_board : boards)
       {
          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-            n_board["number"].as<uint8_t>(),
-            (uint8_t)CONFIG_TOPIC_PLATFORM,
-            0,
-            (uint8_t)CONFIG_TOPIC_PLATFORM,
-            n_board["platform"].as<uint32_t>()));
+             n_board["number"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_PLATFORM,
+             0,
+             (uint8_t)CONFIG_TOPIC_PLATFORM,
+             n_board["platform"].as<uint32_t>()));
 
          if (n_board["pollEvents"].as<bool>())
          {
@@ -134,7 +136,7 @@ bool PPUC::Connect()
       const YAML::Node &switches = m_ppucConfig["switches"];
       for (YAML::Node n_switch : switches)
       {
-         uint8_t index = 0;
+         index = 0;
          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
              n_switch["board"].as<uint8_t>(),
              (uint8_t)CONFIG_TOPIC_SWITCHES,
@@ -149,11 +151,71 @@ bool PPUC::Connect()
              n_switch["number"].as<uint32_t>()));
       }
 
+      // Send switch matrix configuration to I/O boards
+      const YAML::Node &switchMatrix = m_ppucConfig["switchMatrix"];
+      index = 0;
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            switchMatrix["board"].as<uint8_t>(),
+            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+            index++,
+            (uint8_t)CONFIG_TOPIC_ACTIVE_LOW,
+            switchMatrix["activeLow"].as<uint32_t>()));
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            switchMatrix["board"].as<uint8_t>(),
+            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+            index++,
+            (uint8_t)CONFIG_TOPIC_MAX_PULSE_TIME,
+            switchMatrix["pulseTime"].as<uint32_t>()));
+      const YAML::Node &switcheMatrixColumns = m_ppucConfig["switchMatrix"]["columns"];
+      for (YAML::Node n_switchMatrixColumn : switcheMatrixColumns)
+      {
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+             switchMatrix["board"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+             index++,
+             (uint8_t)CONFIG_TOPIC_TYPE,
+             MATRIX_TYPE_COLUMN));
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+             switchMatrix["board"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+             index++,
+             (uint8_t)CONFIG_TOPIC_NUMBER,
+             n_switchMatrixColumn["number"].as<uint32_t>()));
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+             switchMatrix["board"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+             index++,
+             (uint8_t)CONFIG_TOPIC_PORT,
+             n_switchMatrixColumn["port"].as<uint32_t>()));
+      }
+      const YAML::Node &switcheMatrixRows = m_ppucConfig["switchMatrix"]["rows"];
+      for (YAML::Node n_switchMatrixRow : switcheMatrixRows)
+      {
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+             switchMatrix["board"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+             index++,
+             (uint8_t)CONFIG_TOPIC_TYPE,
+             MATRIX_TYPE_ROW));
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+             switchMatrix["board"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+             index++,
+             (uint8_t)CONFIG_TOPIC_NUMBER,
+             n_switchMatrixRow["number"].as<uint32_t>()));
+         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+             switchMatrix["board"].as<uint8_t>(),
+             (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX,
+             index++,
+             (uint8_t)CONFIG_TOPIC_PORT,
+             n_switchMatrixRow["port"].as<uint32_t>()));
+      }
+
       // Send PWM configuration to I/O boards
       const YAML::Node &pwmOutput = m_ppucConfig["pwmOutput"];
       for (YAML::Node n_pwmOutput : pwmOutput)
       {
-         uint8_t index = 0;
+         index = 0;
          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
              n_pwmOutput["board"].as<uint8_t>(),
              (uint8_t)CONFIG_TOPIC_PWM,
@@ -224,7 +286,7 @@ bool PPUC::Connect()
       const YAML::Node &ledStripes = m_ppucConfig["ledStripes"];
       for (YAML::Node n_ledStripe : ledStripes)
       {
-         uint8_t index = 0;
+         index = 0;
          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
              n_ledStripe["board"].as<uint8_t>(),
              (uint8_t)CONFIG_TOPIC_LED_STRING,
@@ -260,7 +322,6 @@ bool PPUC::Connect()
          SendLedConfigBlock(m_ppucConfig["ledStripes"]["flashers"], LED_TYPE_FLASHER, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
          SendLedConfigBlock(m_ppucConfig["ledStripes"]["gi"], LED_TYPE_GI, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
       }
-
 
       // Wait before continuing.
       std::this_thread::sleep_for(std::chrono::milliseconds(1000));
