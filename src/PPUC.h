@@ -59,6 +59,7 @@ public:
    void SetRom(const char *rom);
    const char *GetRom();
    void SetSerial(const char *serial);
+   const char *GetSerial();
    bool Connect();
    void Disconnect();
 

@@ -69,6 +69,11 @@ void PPUC::SetSerial(const char *serial)
    strcpy(m_serial, serial);
 }
 
+const char *PPUC::GetSerial()
+{
+   return m_serial;
+}
+
 void PPUC::SendLedConfigBlock(const YAML::Node &items, uint32_t type, uint8_t board, uint32_t port)
 {
    for (YAML::Node n_item : items)
