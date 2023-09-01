@@ -49,21 +49,21 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 
-if(USE_ANDROID)
-else()
-   set(SERIALIB_SOURCES
-      src/serialib/serialib.h
-      src/serialib/serialib.cpp
-   )
+if(NOT EXISTS ${SERIALPORT_LIBRARIES})
+   get_filename_component(SERIALPORT_CMAKE ../libserialport/CMakeLists.txt ABSOLUTE)
+   if(EXISTS ${SERIALPORT_CMAKE})
+      message(STATUS "enabling SerialPort")
+      add_subdirectory(../libserialport libserialport)
+      set (SERIALPORT_LIBRARIES SerialPort)
+   else()
+      message(STATUS "libserialport source not found in ../libserialport")
+   endif()
 endif()
 
 find_package(yaml-cpp REQUIRED)
 link_directories(${YAML_CPP_LIBRARY_DIR})
 
 set(LIBRARY_SOURCES
-   ${SERIALIB_SOURCES}
-   src/SerialPort.h
-   src/SerialPort.cpp
    src/RS485Comm.h
    src/RS485Comm.cpp
    src/PPUC.h
@@ -85,7 +85,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
          VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}
       )
       target_include_directories(ppuc_shared PUBLIC ${INCLUDE_DIRS})
-      target_link_libraries(ppuc_shared LINK_PUBLIC ${YAML_CPP_LIBRARIES})
+      target_link_libraries(ppuc_shared LINK_PUBLIC
+         ${SERIALPORT_LIBRARIES}
+         ${YAML_CPP_LIBRARIES}
+      )
       install(TARGETS ppuc_shared
          LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
       )
@@ -94,7 +97,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
    add_library(ppuc_static STATIC ${LIBRARY_SOURCES})
    set_target_properties(ppuc_static PROPERTIES OUTPUT_NAME ${LIB_NAME})
    target_include_directories(ppuc_static PUBLIC ${INCLUDE_DIRS})
-   target_link_libraries(ppuc_static LINK_PUBLIC ${YAML_CPP_LIBRARIES})
+   target_link_libraries(ppuc_static LINK_PUBLIC
+      ${SERIALPORT_LIBRARIES}
+      ${YAML_CPP_LIBRARIES}
+   )
    install(TARGETS ppuc_static
       LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
    )
@@ -103,5 +109,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 else()
    add_library(PPUC ${LIBRARY_SOURCES})
    target_include_directories(PPUC PUBLIC ${INCLUDE_DIRS})
-   target_link_libraries(PPUC LINK_PUBLIC ${YAML_CPP_LIBRARIES})
+   target_link_libraries(PPUC LINK_PUBLIC
+      ${SERIALPORT_LIBRARIES}
+      ${YAML_CPP_LIBRARIES}
+   )
 endif()

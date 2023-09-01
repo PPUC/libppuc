@@ -7,7 +7,8 @@
 #include <mutex>
 #include <stdio.h>
 #include <stdarg.h>
-#include "SerialPort.h"
+// @todo better handling of external lib
+#include "../../libserialport/src/SerialPort.h"
 #include "Event.h"
 #include "PPUC.h"
 
