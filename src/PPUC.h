@@ -74,6 +74,7 @@ private:
    bool m_debug;
    char *m_rom;
    char *m_serial;
+   uint8_t m_platform;
 
    void SendLedConfigBlock(const YAML::Node &items, uint32_t type, uint8_t board, uint32_t port);
 };
