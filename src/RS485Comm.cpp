@@ -39,6 +39,11 @@ void RS485Comm::LogMessage(const char *format, ...)
    va_end(args);
 }
 
+void RS485Comm::SetDebug(bool debug)
+{
+   m_debug = debug;
+}
+
 void RS485Comm::Run()
 {
    m_pThread = new std::thread([this]()
@@ -142,7 +147,10 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 
       delete event;
 
-      return m_serialPort.WriteBytes(m_msg, 11);
+      if (1 == m_serialPort.WriteBytes(m_msg, 11))
+      {
+         return true;
+      }
    }
 
    return false;
@@ -159,7 +167,10 @@ bool RS485Comm::SendEvent(Event *event)
       m_msg[4] = event->value;
       //       = (uint8_t) 255;
 
-      return m_serialPort.WriteBytes(m_msg, 6);
+      if (1 == m_serialPort.WriteBytes(m_msg, 6))
+      {
+         return true;
+      }
    }
 
    return false;
@@ -205,23 +216,31 @@ void RS485Comm::PollEvents(int board)
       {
          switch (event_recv->sourceId)
          {
+         case EVENT_PONG:
+            m_activeBoards[(int)event_recv->value] = true;
+            if (m_debug)
+            {
+               // @todo user logger
+               printf("Found i/o board %d", (int)event_recv->value);
+            }
+            break;
+
          case EVENT_NULL:
             null_event = true;
-            delete event_recv;
             break;
 
          case EVENT_SOURCE_SWITCH:
             m_switchesQueueMutex.lock();
             m_switches.push(new PPUCSwitchState(event_recv->sourceId, event_recv->value));
             m_switchesQueueMutex.unlock();
-            delete event_recv;
             break;
 
          default:
             // @todo handle events like error reports, broken coils, ...
-            delete event_recv;
             break;
          }
+
+         delete event_recv;
       }
    }
 }

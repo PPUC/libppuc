@@ -25,6 +25,8 @@
 #define EVENT_READ_SWITCHES 82   // "R" Read current state of all switches on i/o boards
 #define EVENT_SOURCE_SOLENOID 83 // "S" VPX/DOF/PUP includes flashers
 #define EVENT_SOURCE_SWITCH 87   // "W" VPX/DOF/PUP
+#define EVENT_PING 88            // "X"
+#define EVENT_PONG 89            // "Y"
 
 #define CONFIG_TOPIC_PLATFORM 102      // "f"
 #define CONFIG_TOPIC_LED_STRING 103    // "g"
@@ -61,7 +63,7 @@
 #define LED_TYPE_LAMP 3    // Lamp
 
 #define MATRIX_TYPE_COLUMN 1 // Column
-#define MATRIX_TYPE_ROW    2 // Row
+#define MATRIX_TYPE_ROW 2    // Row
 
 struct Event
 {

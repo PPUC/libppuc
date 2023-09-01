@@ -71,7 +71,7 @@ private:
    YAML::Node m_ppucConfig;
    RS485Comm *m_pRS485Comm;
 
-   bool m_debug;
+   bool m_debug = false;
    char *m_rom;
    char *m_serial;
    uint8_t m_platform;

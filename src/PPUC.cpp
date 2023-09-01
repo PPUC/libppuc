@@ -56,6 +56,7 @@ void PPUC::LoadConfiguration(const char *configFile)
 
 void PPUC::SetDebug(bool debug)
 {
+    m_pRS485Comm->SetDebug(debug);
     m_debug = debug;
 }
 
@@ -132,6 +133,8 @@ bool PPUC::Connect()
 {
     if (m_pRS485Comm->Connect(m_serial))
     {
+        m_pRS485Comm->QueueEvent(new Event(EVENT_PING, 1));
+
         uint8_t index = 0;
         const YAML::Node &boards = m_ppucConfig["boards"];
         for (YAML::Node n_board : boards)

@@ -66,6 +66,8 @@ public:
    void RegisterSwitchBoard(uint8_t number);
    PPUCSwitchState *GetNextSwitchState();
 
+   void SetDebug(bool debug);
+
 private:
    void LogMessage(const char *format, ...);
 
@@ -78,6 +80,9 @@ private:
 
    uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
    uint8_t m_switchBoardCounter = 0;
+   bool m_activeBoards[RS485_COMM_MAX_BOARDS] = { false };
+
+   bool m_debug = false;
 
    // Event message buffers, we need two independent for events and config events because of threading.
    uint8_t m_msg[6] = {255};
