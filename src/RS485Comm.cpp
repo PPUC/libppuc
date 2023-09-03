@@ -68,9 +68,11 @@ void RS485Comm::Run()
             m_eventQueueMutex.unlock();
          }
 
-         PollEvents(i++);
+         PollEvents(m_switchBoards[i++]);
          if (i > m_switchBoardCounter)
+         {
             i = 0;
+         }
 
          std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
@@ -99,7 +101,22 @@ bool RS485Comm::Connect(const char *pDevice)
    m_serialPort.SetWriteTimeout(RS485_COMM_SERIAL_WRITE_TIMEOUT);
 
    if (m_serialPort.Open(pDevice, RS485_COMM_BAUD_RATE, 8, 1, 0) != 1)
+   {
       return false;
+   }
+
+   // Wait before continuing.
+   std::this_thread::sleep_for(std::chrono::milliseconds(200));
+   SendEvent(new Event(EVENT_RESET));
+   // Wait before continuing.
+   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+   SendEvent(new Event(EVENT_PING));
+   // Wait before continuing.
+   std::this_thread::sleep_for(std::chrono::milliseconds(200));
+   for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++)
+   {
+      PollEvents(i);
+   }
 
    return true;
 }
@@ -133,22 +150,27 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 {
    if (m_serialPort.IsOpen())
    {
-      //       = (uint8_t) 255;
+      m_cmsg[0] = (uint8_t) 255;
       m_cmsg[1] = event->sourceId;
       m_cmsg[2] = event->boardId;
       m_cmsg[3] = event->topic;
-      m_cmsg[4] = event->key;
-      m_cmsg[5] = event->index;
+      m_cmsg[4] = event->index;
+      m_cmsg[5] = event->key;
       m_cmsg[6] = event->value >> 24;
       m_cmsg[7] = (event->value >> 16) & 0xff;
       m_cmsg[8] = (event->value >> 8) & 0xff;
       m_cmsg[9] = event->value & 0xff;
-      //       = (uint8_t) 255;
+      m_cmsg[10] = (uint8_t) 255;
 
       delete event;
 
-      if (1 == m_serialPort.WriteBytes(m_msg, 11))
+      if (1 == m_serialPort.WriteBytes(m_cmsg, 11))
       {
+         if (m_debug)
+         {
+            // @todo user logger
+            printf("Sent ConfigEvent %d %d %d %d %d %d %02x%02x%02x%02x %d\n", m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5], m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10]);
+         }
          return true;
       }
    }
@@ -160,15 +182,20 @@ bool RS485Comm::SendEvent(Event *event)
 {
    if (m_serialPort.IsOpen())
    {
-      //       = (uint8_t) 255;
+      m_msg[0] = (uint8_t) 255;
       m_msg[1] = event->sourceId;
       m_msg[2] = event->eventId >> 8;
       m_msg[3] = event->eventId & 0xff;
       m_msg[4] = event->value;
-      //       = (uint8_t) 255;
+      m_msg[5] = (uint8_t) 255;
 
       if (1 == m_serialPort.WriteBytes(m_msg, 6))
       {
+         if (m_debug)
+         {
+            // @todo user logger
+            printf("Sent Event %d %d %02x%02x %d %d\n", m_msg[0], m_msg[1], m_msg[2], m_msg[3], m_msg[4], m_msg[5]);
+         }
          return true;
       }
    }

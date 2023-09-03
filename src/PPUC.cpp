@@ -133,8 +133,6 @@ bool PPUC::Connect()
 {
     if (m_pRS485Comm->Connect(m_serial))
     {
-        m_pRS485Comm->QueueEvent(new Event(EVENT_PING, 1));
-
         uint8_t index = 0;
         const YAML::Node &boards = m_ppucConfig["boards"];
         for (YAML::Node n_board : boards)
@@ -341,7 +339,7 @@ bool PPUC::Connect()
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         // Tell I/O boards to read initial switch states, for example coin door closed.
-        m_pRS485Comm->QueueEvent(new Event(EVENT_READ_SWITCHES, 1));
+        m_pRS485Comm->QueueEvent(new Event(EVENT_READ_SWITCHES));
 
         m_pRS485Comm->Run();
 

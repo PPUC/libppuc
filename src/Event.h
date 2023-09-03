@@ -27,6 +27,7 @@
 #define EVENT_SOURCE_SWITCH 87   // "W" VPX/DOF/PUP
 #define EVENT_PING 88            // "X"
 #define EVENT_PONG 89            // "Y"
+#define EVENT_RESET 90           // "Z"
 
 #define CONFIG_TOPIC_PLATFORM 102      // "f"
 #define CONFIG_TOPIC_LED_STRING 103    // "g"
@@ -70,6 +71,13 @@ struct Event
     uint8_t sourceId;
     uint16_t eventId;
     uint8_t value;
+
+    Event(uint8_t sId)
+    {
+        sourceId = sId;
+        eventId = 1;
+        value = 1;
+    }
 
     Event(uint8_t sId, uint16_t eId)
     {
