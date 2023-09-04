@@ -50,7 +50,7 @@ void RS485Comm::Run()
                                {
       LogMessage("RS485Comm run thread starting");
 
-      int i = 0;
+      int switchBoardCount = 0;
       while (m_serialPort.IsOpen())
       {
          m_eventQueueMutex.lock();
@@ -68,10 +68,13 @@ void RS485Comm::Run()
             m_eventQueueMutex.unlock();
          }
 
-         PollEvents(m_switchBoards[i++]);
-         if (i > m_switchBoardCounter)
+         if (m_activeBoards[m_switchBoards[switchBoardCount]]) {
+            PollEvents(m_switchBoards[switchBoardCount]);
+         }
+
+         if (++switchBoardCount > m_switchBoardCounter)
          {
-            i = 0;
+            switchBoardCount = 0;
          }
 
          std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -115,6 +118,10 @@ bool RS485Comm::Connect(const char *pDevice)
    std::this_thread::sleep_for(std::chrono::milliseconds(200));
    for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++)
    {
+      if (m_debug)
+      {
+         printf("Probe i/o board %d\n", i);
+      }
       PollEvents(i);
    }
 
@@ -150,7 +157,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 {
    if (m_serialPort.IsOpen())
    {
-      m_cmsg[0] = (uint8_t) 255;
+      m_cmsg[0] = (uint8_t)255;
       m_cmsg[1] = event->sourceId;
       m_cmsg[2] = event->boardId;
       m_cmsg[3] = event->topic;
@@ -160,7 +167,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
       m_cmsg[7] = (event->value >> 16) & 0xff;
       m_cmsg[8] = (event->value >> 8) & 0xff;
       m_cmsg[9] = event->value & 0xff;
-      m_cmsg[10] = (uint8_t) 255;
+      m_cmsg[10] = (uint8_t)255;
 
       delete event;
 
@@ -182,12 +189,12 @@ bool RS485Comm::SendEvent(Event *event)
 {
    if (m_serialPort.IsOpen())
    {
-      m_msg[0] = (uint8_t) 255;
+      m_msg[0] = (uint8_t)255;
       m_msg[1] = event->sourceId;
       m_msg[2] = event->eventId >> 8;
       m_msg[3] = event->eventId & 0xff;
       m_msg[4] = event->value;
-      m_msg[5] = (uint8_t) 255;
+      m_msg[5] = (uint8_t)255;
 
       if (1 == m_serialPort.WriteBytes(m_msg, 6))
       {
@@ -209,22 +216,41 @@ Event *RS485Comm::receiveEvent()
    {
       std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
-      // Set a timeout of 1ms when waiting for an I/O board event.
+      // Set a timeout of 5ms when waiting for an I/O board event.
+      // The RS485 converter on the board itself requires 1ms to toggle send/receive mode.
       while ((std::chrono::duration_cast<std::chrono::microseconds>(
                   std::chrono::steady_clock::now() - start))
-                 .count() < 1000)
+                 .count() < 5000)
       {
+         // printf("Available %d\n", m_serialPort.Available());
          if (m_serialPort.Available() >= 6)
          {
-            uint_fast8_t poll[6] = {0};
-            if (m_serialPort.ReadBytes(poll, 6))
+            uint8_t startByte;
+            m_serialPort.ReadChar(&startByte);
+
+            if (startByte == 255)
             {
-               if (poll[0] == 255 && poll[5] == 255)
+               uint8_t sourceId;
+               m_serialPort.ReadChar(&sourceId);
+               if (sourceId != 0)
                {
-                  return new Event(poll[1], (((uint16_t)poll[2]) << 8) + poll[3], poll[4]);
+                  uint8_t eventIdHigh;
+                  uint8_t eventIdLow;
+                  m_serialPort.ReadChar(&eventIdHigh);
+                  m_serialPort.ReadChar(&eventIdLow);
+                  uint16_t eventId = (((uint16_t)eventIdHigh) << 8) + eventIdLow;
+                  if (eventId != 0)
+                  {
+                     uint8_t value;
+                     m_serialPort.ReadChar(&value);
+                     m_serialPort.ReadChar(&startByte);
+                     if (startByte == 255)
+                     {
+                        return new Event(sourceId, eventId, value);
+                     }
+                  }
                }
             }
-            return nullptr;
          }
       }
    }
@@ -248,7 +274,7 @@ void RS485Comm::PollEvents(int board)
             if (m_debug)
             {
                // @todo user logger
-               printf("Found i/o board %d", (int)event_recv->value);
+               printf("Found i/o board %d\n", (int)event_recv->value);
             }
             break;
 
