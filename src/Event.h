@@ -54,6 +54,7 @@
 #define CONFIG_TOPIC_ACTIVE_LOW 86                 // "V"
 #define CONFIG_TOPIC_POWER 87                      // "W"
 #define CONFIG_TOPIC_TYPE 89                       // "Y"
+#define CONFIG_TOPIC_NULL 99                       // NULL
 
 #define PWM_TYPE_SOLENOID 1 // Coil
 #define PWM_TYPE_FLASHER 2  // Flasher
@@ -112,6 +113,16 @@ struct ConfigEvent
     uint8_t index;    // 0, index of assignment
     uint8_t key;      // ledType, assignment/brightness
     uint32_t value;   // FFFF00FF
+
+    ConfigEvent(uint8_t b)
+    {
+        sourceId = EVENT_CONFIGURATION;
+        boardId = b;
+        topic = CONFIG_TOPIC_NULL;
+        index = 1;
+        key = 1;
+        value = 1;
+    }
 
     ConfigEvent(uint8_t b, uint8_t t, uint8_t i, uint8_t k, uint32_t v)
     {

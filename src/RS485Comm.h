@@ -85,8 +85,8 @@ private:
    bool m_debug = false;
 
    // Event message buffers, we need two independent for events and config events because of threading.
-   uint8_t m_msg[6] = {255};
-   uint8_t m_cmsg[11] = {255};
+   uint8_t m_msg[7];
+   uint8_t m_cmsg[12];
 
    SerialPort m_serialPort;
    std::thread *m_pThread;

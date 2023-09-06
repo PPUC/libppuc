@@ -110,12 +110,22 @@ bool RS485Comm::Connect(const char *pDevice)
 
    // Wait before continuing.
    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+   for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++)
+   {
+      // Let the boards synchronize themselves to the RS485 bus.
+      SendEvent(new Event(EVENT_NULL));
+      SendConfigEvent(new ConfigEvent(i));
+      SendEvent(new Event(EVENT_NULL));
+   }
+
    SendEvent(new Event(EVENT_RESET));
+
    // Wait before continuing.
-   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+   std::this_thread::sleep_for(std::chrono::milliseconds(500));
    SendEvent(new Event(EVENT_PING));
    // Wait before continuing.
-   std::this_thread::sleep_for(std::chrono::milliseconds(200));
+   std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
    for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++)
    {
       if (m_debug)
@@ -124,6 +134,8 @@ bool RS485Comm::Connect(const char *pDevice)
       }
       PollEvents(i);
    }
+
+   printf("ACTIVE %d\n", m_activeBoards[0]);
 
    return true;
 }
@@ -157,7 +169,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 {
    if (m_serialPort.IsOpen())
    {
-      m_cmsg[0] = (uint8_t)255;
+      m_cmsg[0] = 0b11111111;
       m_cmsg[1] = event->sourceId;
       m_cmsg[2] = event->boardId;
       m_cmsg[3] = event->topic;
@@ -167,16 +179,17 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
       m_cmsg[7] = (event->value >> 16) & 0xff;
       m_cmsg[8] = (event->value >> 8) & 0xff;
       m_cmsg[9] = event->value & 0xff;
-      m_cmsg[10] = (uint8_t)255;
+      m_cmsg[10] = 0b10101010;
+      m_cmsg[11] = 0b01010101;
 
       delete event;
 
-      if (1 == m_serialPort.WriteBytes(m_cmsg, 11))
+      if (1 == m_serialPort.WriteBytes(m_cmsg, 12))
       {
          if (m_debug)
          {
             // @todo user logger
-            printf("Sent ConfigEvent %d %d %d %d %d %d %02x%02x%02x%02x %d\n", m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5], m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10]);
+            printf("Sent ConfigEvent %02X %d %d %d %d %d %02x%02x%02x%02x %02X %02X\n", m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5], m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10], m_cmsg[11]);
          }
          return true;
       }
@@ -194,14 +207,15 @@ bool RS485Comm::SendEvent(Event *event)
       m_msg[2] = event->eventId >> 8;
       m_msg[3] = event->eventId & 0xff;
       m_msg[4] = event->value;
-      m_msg[5] = (uint8_t)255;
+      m_msg[5] = 0b10101010;
+      m_msg[6] = 0b01010101;
 
-      if (1 == m_serialPort.WriteBytes(m_msg, 6))
+      if (1 == m_serialPort.WriteBytes(m_msg, 7))
       {
          if (m_debug)
          {
             // @todo user logger
-            printf("Sent Event %d %d %02x%02x %d %d\n", m_msg[0], m_msg[1], m_msg[2], m_msg[3], m_msg[4], m_msg[5]);
+            printf("Sent Event %02X %d %02x%02x %d %02X %02X\n", m_msg[0], m_msg[1], m_msg[2], m_msg[3], m_msg[4], m_msg[5], m_msg[6]);
          }
          return true;
       }
@@ -243,10 +257,31 @@ Event *RS485Comm::receiveEvent()
                   {
                      uint8_t value;
                      m_serialPort.ReadChar(&value);
-                     m_serialPort.ReadChar(&startByte);
-                     if (startByte == 255)
+
+                     uint8_t stopByte;
+                     m_serialPort.ReadChar(&stopByte);
+                     if (stopByte == 0b10101010)
                      {
-                        return new Event(sourceId, eventId, value);
+                        m_serialPort.ReadChar(&stopByte);
+                        if (stopByte == 0b01010101)
+                        {
+                           return new Event(sourceId, eventId, value);
+                        }
+                     }
+                  }
+               }
+               // Something went wrong after the start byte, try to get back in sync.
+               while (m_serialPort.Available())
+               {
+                  uint8_t stopByte;
+                  m_serialPort.ReadChar(&stopByte);
+                  if (stopByte == 0b10101010)
+                  {
+                     m_serialPort.ReadChar(&stopByte);
+                     if (stopByte == 0b01010101)
+                     {
+                        // Now we should be back in sync.
+                        break;
                      }
                   }
                }
@@ -270,16 +305,21 @@ void RS485Comm::PollEvents(int board)
          switch (event_recv->sourceId)
          {
          case EVENT_PONG:
-            m_activeBoards[(int)event_recv->value] = true;
-            if (m_debug)
+            if ((int)event_recv->value < RS485_COMM_MAX_BOARDS)
             {
-               // @todo user logger
-               printf("Found i/o board %d\n", (int)event_recv->value);
+               m_activeBoards[(int)event_recv->value] = true;
+               if (m_debug)
+               {
+                  // @todo user logger
+                  printf("Found i/o board %d\n", (int)event_recv->value);
+               }
             }
             break;
 
          case EVENT_NULL:
             null_event = true;
+            // Wait until the i/o board switched back to RS485 receive mode.
+            std::this_thread::sleep_for(std::chrono::microseconds(1000));
             break;
 
          case EVENT_SOURCE_SWITCH:
