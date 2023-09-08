@@ -135,8 +135,6 @@ bool RS485Comm::Connect(const char *pDevice)
       PollEvents(i);
    }
 
-   printf("ACTIVE %d\n", m_activeBoards[0]);
-
    return true;
 }
 
@@ -298,6 +296,9 @@ void RS485Comm::PollEvents(int board)
    Event *event = new Event(EVENT_POLL_EVENTS, 1, board);
    if (SendEvent(event))
    {
+      // Wait until the i/o board switched to RS485 send mode.
+      std::this_thread::sleep_for(std::chrono::microseconds(500));
+
       bool null_event = false;
       Event *event_recv;
       while (!null_event && (event_recv = receiveEvent()))
