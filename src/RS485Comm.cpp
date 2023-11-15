@@ -213,7 +213,7 @@ bool RS485Comm::SendEvent(Event *event)
          if (m_debug)
          {
             // @todo user logger
-            printf("Sent Event %02X %d %02x%02x %d %02X %02X\n", m_msg[0], m_msg[1], m_msg[2], m_msg[3], m_msg[4], m_msg[5], m_msg[6]);
+            printf("Sent Event %d %d %d\n", event->sourceId, event->eventId, event->value);
          }
          return true;
       }
@@ -263,11 +263,23 @@ Event *RS485Comm::receiveEvent()
                         m_serialPort.ReadChar(&stopByte);
                         if (stopByte == 0b01010101)
                         {
+                           if (m_debug)
+                           {
+                              // @todo use logger
+                              printf("Received Event %d %d %d\n", sourceId, eventId, value);
+                           }
                            return new Event(sourceId, eventId, value);
                         }
                      }
                   }
                }
+
+               if (m_debug && m_serialPort.Available())
+               {
+                  // @todo use logger
+                  printf("Error: Lost sync, %d bytes remianing\n", m_serialPort.Available());
+               }
+
                // Something went wrong after the start byte, try to get back in sync.
                while (m_serialPort.Available())
                {
@@ -293,6 +305,11 @@ Event *RS485Comm::receiveEvent()
 
 void RS485Comm::PollEvents(int board)
 {
+   if (m_debug)
+   {
+      // @todo use logger
+      printf("Polling board %d ...\n", board);
+   }
    Event *event = new Event(EVENT_POLL_EVENTS, 1, board);
    if (SendEvent(event))
    {
