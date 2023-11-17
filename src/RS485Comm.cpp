@@ -228,11 +228,11 @@ Event *RS485Comm::receiveEvent()
    {
       std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
-      // Set a timeout of 5ms when waiting for an I/O board event.
+      // Set a timeout of 8ms when waiting for an I/O board event.
       // The RS485 converter on the board itself requires 1ms to toggle send/receive mode.
       while ((std::chrono::duration_cast<std::chrono::microseconds>(
                   std::chrono::steady_clock::now() - start))
-                 .count() < 5000)
+                 .count() < 8000)
       {
          // printf("Available %d\n", m_serialPort.Available());
          if (m_serialPort.Available() >= 6)
@@ -270,19 +270,38 @@ Event *RS485Comm::receiveEvent()
                            }
                            return new Event(sourceId, eventId, value);
                         }
+                        else if (m_debug)
+                        {
+                           // @todo use logger
+                           printf("Received wrong second stop byte %d\n", stopByte);
+                        }
+                     }
+                     else if (m_debug)
+                     {
+                        // @todo use logger
+                        printf("Received wrong first stop byte %d\n", stopByte);
                      }
                   }
+                  else if (m_debug)
+                  {
+                     // @todo use logger
+                     printf("Received illegal event id %d\n", eventId);
+                  }
                }
-
-               if (m_debug && m_serialPort.Available())
+               else if (m_debug)
                {
                   // @todo use logger
-                  printf("Error: Lost sync, %d bytes remianing\n", m_serialPort.Available());
+                  printf("Received illegal source id %d\n", sourceId);
                }
 
                // Something went wrong after the start byte, try to get back in sync.
                while (m_serialPort.Available())
                {
+                  if (m_debug)
+                  {
+                     // @todo use logger
+                     printf("Error: Lost sync, %d bytes remaining\n", m_serialPort.Available());
+                  }
                   uint8_t stopByte;
                   m_serialPort.ReadChar(&stopByte);
                   if (stopByte == 0b10101010)
@@ -298,6 +317,16 @@ Event *RS485Comm::receiveEvent()
             }
          }
       }
+      if (m_debug)
+      {
+         // @todo use logger
+         printf("Timeout\n");
+      }
+   }
+   if (m_debug)
+   {
+      // @todo use logger
+      printf("RS485 Error\n");
    }
 
    return nullptr;
@@ -310,11 +339,12 @@ void RS485Comm::PollEvents(int board)
       // @todo use logger
       printf("Polling board %d ...\n", board);
    }
+
    Event *event = new Event(EVENT_POLL_EVENTS, 1, board);
    if (SendEvent(event))
    {
       // Wait until the i/o board switched to RS485 send mode.
-      std::this_thread::sleep_for(std::chrono::microseconds(500));
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
 
       bool null_event = false;
       Event *event_recv;
@@ -336,8 +366,6 @@ void RS485Comm::PollEvents(int board)
 
          case EVENT_NULL:
             null_event = true;
-            // Wait until the i/o board switched back to RS485 receive mode.
-            std::this_thread::sleep_for(std::chrono::microseconds(1000));
             break;
 
          case EVENT_SOURCE_SWITCH:
@@ -353,5 +381,8 @@ void RS485Comm::PollEvents(int board)
 
          delete event_recv;
       }
+
+      // Wait until the i/o board switched back to RS485 receive mode.
+      std::this_thread::sleep_for(std::chrono::microseconds(500));
    }
 }
