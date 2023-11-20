@@ -44,11 +44,11 @@ void PPUC::LoadConfiguration(const char *configFile)
     strcpy(m_serial, c_serial.c_str());
     std::string c_platform = m_ppucConfig["platform"].as<std::string>();
     m_platform = PLATFORM_WPC;
-    if (strcmp(c_platform.c_str(), "DE"))
+    if (strcmp(c_platform.c_str(), "DE") == 0)
     {
         m_platform = PLATFORM_DATA_EAST;
     }
-    else if (strcmp(c_platform.c_str(), "SYS11"))
+    else if (strcmp(c_platform.c_str(), "SYS11") == 0)
     {
         m_platform = PLATFORM_SYS11;
     }
@@ -120,12 +120,17 @@ void PPUC::SendLedConfigBlock(const YAML::Node &items, uint32_t type, uint8_t bo
             index++,
             (uint8_t)CONFIG_TOPIC_BRIGHTNESS,
             n_item["brightness"].as<uint32_t>()));
+
+        uint32_t color;
+        std::stringstream ss;
+        ss << std::hex << n_item["color"].as<std::string>();
+        ss >> color;
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
             board,
             (uint8_t)CONFIG_TOPIC_LAMPS,
             index++,
             (uint8_t)CONFIG_TOPIC_COLOR,
-            n_item["color"].as<uint32_t>()));
+            color));
     }
 }
 
@@ -341,9 +346,9 @@ bool PPUC::Connect()
                     (uint8_t)CONFIG_TOPIC_AFTER_GLOW,
                     n_ledStripe["afterGlow"].as<uint32_t>()));
 
-                SendLedConfigBlock(m_ppucConfig["ledStripes"]["lamps"], LED_TYPE_LAMP, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
-                SendLedConfigBlock(m_ppucConfig["ledStripes"]["flashers"], LED_TYPE_FLASHER, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
-                SendLedConfigBlock(m_ppucConfig["ledStripes"]["gi"], LED_TYPE_GI, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
+                SendLedConfigBlock(n_ledStripe["lamps"], LED_TYPE_LAMP, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
+                SendLedConfigBlock(n_ledStripe["flashers"], LED_TYPE_FLASHER, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
+                SendLedConfigBlock(n_ledStripe["gi"], LED_TYPE_GI, n_ledStripe["board"].as<uint8_t>(), n_ledStripe["port"].as<uint32_t>());
             }
         }
 
