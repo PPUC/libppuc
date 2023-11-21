@@ -89,6 +89,12 @@ void PPUC::SendLedConfigBlock(const YAML::Node &items, uint32_t type, uint8_t bo
 {
     for (YAML::Node n_item : items)
     {
+        if (m_debug)
+        {
+            // @todo user logger
+            printf("Description: %s\n", n_item["description"].as<std::string>().c_str());
+        }
+
         uint8_t index = 0;
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
             board,
@@ -161,6 +167,12 @@ bool PPUC::Connect()
         {
             for (YAML::Node n_switch : switches)
             {
+                if (m_debug)
+                {
+                    // @todo user logger
+                    printf("Description: %s\n", n_switch["description"].as<std::string>().c_str());
+                }
+
                 index = 0;
                 m_pRS485Comm->SendConfigEvent(new ConfigEvent(
                     n_switch["board"].as<uint8_t>(),
@@ -246,6 +258,12 @@ bool PPUC::Connect()
         {
             for (YAML::Node n_pwmOutput : pwmOutput)
             {
+                if (m_debug)
+                {
+                    // @todo user logger
+                    printf("Description: %s\n", n_pwmOutput["description"].as<std::string>().c_str());
+                }
+
                 index = 0;
                 m_pRS485Comm->SendConfigEvent(new ConfigEvent(
                     n_pwmOutput["board"].as<uint8_t>(),

@@ -165,6 +165,9 @@ PPUCSwitchState *RS485Comm::GetNextSwitchState()
 
 bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 {
+   // Wait a bit to not exceed the output buffer in case of large configurations.
+   std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
    if (m_serialPort.IsOpen())
    {
       m_cmsg[0] = 0b11111111;
@@ -190,6 +193,14 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
             printf("Sent ConfigEvent %02X %d %d %d %d %d %02x%02x%02x%02x %02X %02X\n", m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5], m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10], m_cmsg[11]);
          }
          return true;
+      }
+      else
+      {
+         if (m_debug)
+         {
+            // @todo user logger
+            printf("Error when sending ConfigEvent %02X %d %d %d %d %d %02x%02x%02x%02x %02X %02X\n", m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5], m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10], m_cmsg[11]);
+         }
       }
    }
 
