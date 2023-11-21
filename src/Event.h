@@ -28,6 +28,9 @@
 #define EVENT_PING 88            // "X"
 #define EVENT_PONG 89            // "Y"
 #define EVENT_RESET 90           // "Z"
+#define EVENT_RUN 91             // RUN
+#define EVENT_NO_ERROR 98        // NO ERROR
+#define EVENT_ERROR 99           // ERROR
 
 #define CONFIG_TOPIC_PLATFORM 102      // "f"
 #define CONFIG_TOPIC_LED_STRING 103    // "g"

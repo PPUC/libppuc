@@ -381,7 +381,7 @@ void RS485Comm::PollEvents(int board)
 
          case EVENT_SOURCE_SWITCH:
             m_switchesQueueMutex.lock();
-            m_switches.push(new PPUCSwitchState(event_recv->sourceId, event_recv->value));
+            m_switches.push(new PPUCSwitchState(event_recv->eventId, event_recv->value));
             m_switchesQueueMutex.unlock();
             break;
 

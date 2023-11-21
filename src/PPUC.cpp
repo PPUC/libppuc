@@ -402,3 +402,13 @@ PPUCSwitchState *PPUC::GetNextSwitchState()
 {
     return m_pRS485Comm->GetNextSwitchState();
 }
+
+void PPUC::StartUpdates()
+{
+    m_pRS485Comm->QueueEvent(new Event(EVENT_RUN, 1, 1));
+}
+
+void PPUC::StopUpdates()
+{
+    m_pRS485Comm->QueueEvent(new Event(EVENT_RUN, 1, 0));
+}

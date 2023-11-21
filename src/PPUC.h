@@ -62,6 +62,8 @@ public:
    const char *GetSerial();
    bool Connect();
    void Disconnect();
+   void StartUpdates();
+   void StopUpdates();
 
    void SetSolenoidState(int number, int state);
    void SetLampState(int number, int state);
