@@ -7,12 +7,18 @@
 #include <mutex>
 #include <stdio.h>
 #include <stdarg.h>
-// @todo better handling of external lib
-#include "../../libserialport/src/SerialPort.h"
 #include "Event.h"
 #include "PPUC.h"
 
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if !((defined(__APPLE__) && ((defined(TARGET_OS_IOS) && TARGET_OS_IOS) || (defined(TARGET_OS_TV) && TARGET_OS_TV))) || defined(__ANDROID__))
+#include "libserialport.h"
+#endif
+
+#if _MSC_VER
 #define CALLBACK __stdcall
 #else
 #define CALLBACK
@@ -24,22 +30,15 @@
 
 #define RS485_COMM_MAX_BOARDS 16
 
-#if defined(_WIN32) || defined(_WIN64)
+#if _MSC_VER
 #define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
 #elif defined(__APPLE__)
 #define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
-#elif defined(__ANDROID__)
-#define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
 #else
-// defined (__linux__)
 #define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
 #endif
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
-
-#ifdef __ANDROID__
-typedef void *(*RS485_AndroidGetJNIEnvFunc)();
-#endif
 
 typedef void(CALLBACK *PPUC_LogMessageCallback)(const char *format, va_list args, const void *userData);
 
@@ -48,10 +47,6 @@ class RS485Comm
 public:
    RS485Comm();
    ~RS485Comm();
-
-#ifdef __ANDROID__
-   void SetAndroidGetJNIEnvFunc(RS485_AndroidGetJNIEnvFunc func);
-#endif
 
    void SetLogMessageCallback(PPUC_LogMessageCallback callback, const void *userData);
 
@@ -88,7 +83,8 @@ private:
    uint8_t m_msg[7];
    uint8_t m_cmsg[12];
 
-   SerialPort m_serialPort;
+   struct sp_port *m_pSerialPort;
+   struct sp_port_config *m_pSerialPortConfig;
    std::thread *m_pThread;
    std::queue<Event *> m_events;
    std::queue<PPUCSwitchState *> m_switches;

@@ -13,20 +13,13 @@ PPUC::PPUC()
 PPUC::~PPUC()
 {
     m_pRS485Comm->Disconnect();
-    free(m_pRS485Comm);
+    delete m_pRS485Comm;
 }
 
 void PPUC::SetLogMessageCallback(PPUC_LogMessageCallback callback, const void *userData)
 {
     m_pRS485Comm->SetLogMessageCallback(callback, userData);
 }
-
-#ifdef __ANDROID__
-void PPUC::SetAndroidGetJNIEnvFunc(PPUC_AndroidGetJNIEnvFunc func)
-{
-    m_pRS485Comm->SetAndroidGetJNIEnvFunc(func);
-}
-#endif
 
 void PPUC::Disconnect()
 {

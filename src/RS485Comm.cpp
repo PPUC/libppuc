@@ -3,10 +3,14 @@
 RS485Comm::RS485Comm()
 {
    m_pThread = NULL;
+   m_pSerialPort = NULL;
+   m_pSerialPortConfig = NULL;
 }
 
 RS485Comm::~RS485Comm()
 {
+   Disconnect();
+
    if (m_pThread)
    {
       m_pThread->join();
@@ -14,13 +18,6 @@ RS485Comm::~RS485Comm()
       delete m_pThread;
    }
 }
-
-#ifdef __ANDROID__
-void RS485Comm::SetAndroidGetJNIEnvFunc(RS485_AndroidGetJNIEnvFunc func)
-{
-   m_serialPort.SetAndroidGetJNIEnvFunc(func);
-}
-#endif
 
 void RS485Comm::SetLogMessageCallback(PPUC_LogMessageCallback callback, const void *userData)
 {
@@ -51,7 +48,7 @@ void RS485Comm::Run()
       LogMessage("RS485Comm run thread starting");
 
       int switchBoardCount = 0;
-      while (m_serialPort.IsOpen())
+      while (m_pSerialPort != NULL)
       {
          m_eventQueueMutex.lock();
 
@@ -92,22 +89,39 @@ void RS485Comm::QueueEvent(Event *event)
 
 void RS485Comm::Disconnect()
 {
-   if (!m_serialPort.IsOpen())
+   if (m_pSerialPort == NULL)
       return;
 
-   m_serialPort.Close();
+   sp_set_config(m_pSerialPort, m_pSerialPortConfig);
+   sp_free_config(m_pSerialPortConfig);
+   m_pSerialPortConfig = NULL;
+
+   sp_close(m_pSerialPort);
+   sp_free_port(m_pSerialPort);
+   m_pSerialPort = NULL;
 }
 
 bool RS485Comm::Connect(const char *pDevice)
 {
-   m_serialPort.SetReadTimeout(RS485_COMM_SERIAL_READ_TIMEOUT);
-   m_serialPort.SetWriteTimeout(RS485_COMM_SERIAL_WRITE_TIMEOUT);
-
-   if (m_serialPort.Open(pDevice, RS485_COMM_BAUD_RATE, 8, 1, 0) != 1)
-   {
+   enum sp_return result = sp_get_port_by_name(pDevice, &m_pSerialPort);
+   if (result != SP_OK)
       return false;
+
+   result = sp_open(m_pSerialPort, SP_MODE_READ_WRITE);
+   if (result != SP_OK) {
+     sp_free_port(m_pSerialPort);
+     m_pSerialPort = NULL;
+     return false;
    }
 
+   sp_new_config(&m_pSerialPortConfig);
+   sp_get_config(m_pSerialPort, m_pSerialPortConfig);
+   sp_set_baudrate(m_pSerialPort, RS485_COMM_BAUD_RATE);
+   sp_set_bits(m_pSerialPort, 8);
+   sp_set_parity(m_pSerialPort, SP_PARITY_NONE);
+   sp_set_stopbits(m_pSerialPort, 1);
+
+   sp_flush(m_pSerialPort, SP_BUF_BOTH);
    // Wait before continuing.
    std::this_thread::sleep_for(std::chrono::milliseconds(200));
    for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++)
@@ -168,7 +182,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
    // Wait a bit to not exceed the output buffer in case of large configurations.
    std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-   if (m_serialPort.IsOpen())
+   if (m_pSerialPort != NULL)
    {
       m_cmsg[0] = 0b11111111;
       m_cmsg[1] = event->sourceId;
@@ -185,7 +199,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 
       delete event;
 
-      if (1 == m_serialPort.WriteBytes(m_cmsg, 12))
+      if (sp_blocking_write(m_pSerialPort, m_cmsg, 12, RS485_COMM_SERIAL_WRITE_TIMEOUT))
       {
          if (m_debug)
          {
@@ -209,7 +223,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent *event)
 
 bool RS485Comm::SendEvent(Event *event)
 {
-   if (m_serialPort.IsOpen())
+   if (m_pSerialPort != NULL)
    {
       m_msg[0] = (uint8_t)255;
       m_msg[1] = event->sourceId;
@@ -219,7 +233,7 @@ bool RS485Comm::SendEvent(Event *event)
       m_msg[5] = 0b10101010;
       m_msg[6] = 0b01010101;
 
-      if (1 == m_serialPort.WriteBytes(m_msg, 7))
+      if (sp_blocking_write(m_pSerialPort, m_msg, 7, RS485_COMM_SERIAL_WRITE_TIMEOUT))
       {
          if (m_debug)
          {
@@ -235,7 +249,7 @@ bool RS485Comm::SendEvent(Event *event)
 
 Event *RS485Comm::receiveEvent()
 {
-   if (m_serialPort.IsOpen())
+   if (m_pSerialPort != NULL)
    {
       std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
@@ -246,32 +260,31 @@ Event *RS485Comm::receiveEvent()
                  .count() < 8000)
       {
          // printf("Available %d\n", m_serialPort.Available());
-         if (m_serialPort.Available() >= 6)
+         if (sp_input_waiting(m_pSerialPort) >= 6)
          {
             uint8_t startByte;
-            m_serialPort.ReadChar(&startByte);
-
+            sp_blocking_read(m_pSerialPort, &startByte, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
             if (startByte == 255)
             {
                uint8_t sourceId;
-               m_serialPort.ReadChar(&sourceId);
+               sp_blocking_read(m_pSerialPort, &sourceId, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
                if (sourceId != 0)
                {
                   uint8_t eventIdHigh;
                   uint8_t eventIdLow;
-                  m_serialPort.ReadChar(&eventIdHigh);
-                  m_serialPort.ReadChar(&eventIdLow);
+                  sp_blocking_read(m_pSerialPort, &eventIdHigh, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
+                  sp_blocking_read(m_pSerialPort, &eventIdLow, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
                   uint16_t eventId = (((uint16_t)eventIdHigh) << 8) + eventIdLow;
                   if (eventId != 0)
                   {
                      uint8_t value;
-                     m_serialPort.ReadChar(&value);
+                     sp_blocking_read(m_pSerialPort, &value, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
 
                      uint8_t stopByte;
-                     m_serialPort.ReadChar(&stopByte);
+                     sp_blocking_read(m_pSerialPort, &stopByte, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
                      if (stopByte == 0b10101010)
                      {
-                        m_serialPort.ReadChar(&stopByte);
+                        sp_blocking_read(m_pSerialPort, &stopByte, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
                         if (stopByte == 0b01010101)
                         {
                            if (m_debug)
@@ -306,18 +319,18 @@ Event *RS485Comm::receiveEvent()
                }
 
                // Something went wrong after the start byte, try to get back in sync.
-               while (m_serialPort.Available())
+               while (sp_input_waiting(m_pSerialPort) > 0)
                {
                   if (m_debug)
                   {
                      // @todo use logger
-                     printf("Error: Lost sync, %d bytes remaining\n", m_serialPort.Available());
+                     printf("Error: Lost sync, %d bytes remaining\n", sp_input_waiting(m_pSerialPort));
                   }
                   uint8_t stopByte;
-                  m_serialPort.ReadChar(&stopByte);
+                  sp_blocking_read(m_pSerialPort, &stopByte, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
                   if (stopByte == 0b10101010)
                   {
-                     m_serialPort.ReadChar(&stopByte);
+                     sp_blocking_read(m_pSerialPort, &stopByte, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
                      if (stopByte == 0b01010101)
                      {
                         // Now we should be back in sync.
