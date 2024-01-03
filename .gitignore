@@ -3,7 +3,6 @@
 /.vs/
 /.vscode/
 CMakeSettings.json
-external.sh
 external
 third-party/runtime-libs
 third-party/build-libs
