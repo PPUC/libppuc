@@ -4,6 +4,6 @@
 /.vscode/
 CMakeSettings.json
 external
-third-party/runtime-libs
-third-party/build-libs
-third-party/include
+third-party/runtime-libs/
+third-party/build-libs/
+third-party/include/
