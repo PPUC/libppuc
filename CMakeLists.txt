@@ -70,7 +70,7 @@ set(PPUC_SOURCES
 
 set(PPUC_INCLUDE_DIRS
    src
-   third_party/include
+   third-party/include
 )
 
 if(BUILD_SHARED)

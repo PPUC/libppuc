@@ -47,5 +47,5 @@ cmake --build build
 cp build/libyaml-cpp.a ../../third-party/build-libs/macos/arm64/
 cmake -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=on -DYAML_CPP_BUILD_CONTRIB=off -DYAML_CPP_BUILD_TOOLS=off -DYAML_CPP_FORMAT_SOURCE=off -B build
 cmake --build build
-cp build/libyaml-cpp.${YAML_CPP_VERSION}.dylib ../../third-party/runtime-libs/macos/arm64/
+cp build/libyaml-cpp*.dylib ../../third-party/runtime-libs/macos/arm64/
 cd ..
