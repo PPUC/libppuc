@@ -2,6 +2,7 @@
 #include "io-boards/PPUCPlatforms.h"
 #include "io-boards/Event.h"
 #include "RS485Comm.h"
+#include <cstring>
 
 PPUC::PPUC()
 {
