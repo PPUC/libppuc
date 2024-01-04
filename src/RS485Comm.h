@@ -7,8 +7,8 @@
 #include <mutex>
 #include <stdio.h>
 #include <stdarg.h>
-#include "Event.h"
 #include "PPUC.h"
+#include "io-boards/Event.h"
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>

@@ -61,7 +61,6 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 
 set(PPUC_SOURCES
-   src/Event.h
    src/RS485Comm.h
    src/RS485Comm.cpp
    src/PPUC.h

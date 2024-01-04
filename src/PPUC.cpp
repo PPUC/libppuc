@@ -1,5 +1,6 @@
 #include "PPUC.h"
-#include "Event.h"
+#include "io-boards/PPUCPlatforms.h"
+#include "io-boards/Event.h"
 #include "RS485Comm.h"
 
 PPUC::PPUC()
