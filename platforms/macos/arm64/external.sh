@@ -57,6 +57,7 @@ cp -r include/yaml-cpp ../../third-party/include/
 cmake -DCMAKE_OSX_ARCHITECTURES=arm64 -DYAML_BUILD_SHARED_LIBS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
 cmake --build build --config Release
 cp build/libyaml-cpp.a ../../third-party/build-libs/macos/arm64/
+rm -rf build
 cmake -DCMAKE_OSX_ARCHITECTURES=arm64 -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
 cmake --build build --config Release
 cp build/libyaml-cpp*.dylib ../../third-party/runtime-libs/macos/arm64/
