@@ -54,10 +54,10 @@ unzip yaml-cpp.zip
 
 cd yaml-cpp-${YAML_CPP_VERSION}
 cp -r include/yaml-cpp ../../third-party/include/
-cmake -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=off -DYAML_CPP_BUILD_CONTRIB=off -DYAML_CPP_BUILD_TOOLS=off -DYAML_CPP_FORMAT_SOURCE=off -B build
-cmake --build build
+cmake -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
+cmake --build build --config Release
 cp build/libyaml-cpp.a ../../third-party/build-libs/linux/aarch64/
-cmake -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=on -DYAML_CPP_BUILD_CONTRIB=off -DYAML_CPP_BUILD_TOOLS=off -DYAML_CPP_FORMAT_SOURCE=off -B build
-cmake --build build
+cmake -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
+cmake --build build --config Release
 cp build/libyaml-cpp.so.* ../../third-party/runtime-libs/linux/aarch64/
 cd ..
