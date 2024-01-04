@@ -69,7 +69,7 @@ if(BUILD_SHARED)
          third-party/build-libs/${PLATFORM}/${ARCH}
          third-party/runtime-libs/${PLATFORM}/${ARCH}
       )
-      target_link_libraries(ppuc_shared PUBLIC libserialport libyaml-cpp)
+      target_link_libraries(ppuc_shared PUBLIC libserialport yaml-cpp)
    elseif(PLATFORM STREQUAL "macos")
       target_link_directories(ppuc_shared PUBLIC
          third-party/runtime-libs/${PLATFORM}/${ARCH}
@@ -152,7 +152,7 @@ if(BUILD_STATIC)
             third-party/build-libs/${PLATFORM}/${ARCH}
             third-party/runtime-libs/${PLATFORM}/${ARCH}
          )
-         target_link_libraries(ppuc_test_s PUBLIC ppuc_static libserialport libyaml-cpp)
+         target_link_libraries(ppuc_test_s PUBLIC ppuc_static libserialport yaml-cpp)
 
          add_custom_command(TARGET ppuc_test_s POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/*.lib" "$<TARGET_FILE_DIR:ppuc_test_s>"
