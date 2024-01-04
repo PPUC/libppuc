@@ -48,10 +48,10 @@ unzip yaml-cpp.zip
 
 cd yaml-cpp-${YAML_CPP_VERSION}
 cp -r include/yaml-cpp ../../third-party/include/
-cmake -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
+cmake -G "Visual Studio 17 2022" -A Win32 -DYAML_BUILD_SHARED_LIBS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
 cmake --build build --config Release
-cp build/yaml-cpp.lib ../../third-party/build-libs/win/x86/
-cmake -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
+cp build/Release/yaml-cpp.lib ../../third-party/build-libs/win/x86/
+cmake -G "Visual Studio 17 2022" -A Win32 -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
 cmake --build build --config Release
-cp build/yaml-cpp*.dll ../../third-party/runtime-libs/win/x86/
+cp build/Release/yaml-cpp*.dll ../../third-party/runtime-libs/win/x86/
 cd ..
