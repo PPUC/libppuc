@@ -9,14 +9,7 @@
 #include <stdarg.h>
 #include "PPUC.h"
 #include "io-boards/Event.h"
-
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#endif
-
-#if !((defined(__APPLE__) && ((defined(TARGET_OS_IOS) && TARGET_OS_IOS) || (defined(TARGET_OS_TV) && TARGET_OS_TV))) || defined(__ANDROID__))
 #include "libserialport.h"
-#endif
 
 #if _MSC_VER
 #define CALLBACK __stdcall

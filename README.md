@@ -46,24 +46,3 @@ platforms/macos/x64/external.sh
 cmake -DPLATFORM=macos -DARCH=x64 -DCMAKE_BUILD_TYPE=Release -B build
 cmake --build build
 ```
-
-#### iOS (arm64)
-```shell
-platforms/ios/arm64/external.sh
-cmake -DPLATFORM=ios -DARCH=arm64 -DCMAKE_BUILD_TYPE=Release -B build
-cmake --build build
-```
-
-#### tvOS (arm64)
-```shell
-platforms/tvos/arm64/external.sh
-cmake -DPLATFORM=tvos -DARCH=arm64 -DCMAKE_BUILD_TYPE=Release -B build
-cmake --build build
-```
-
-#### Android (arm64-v8a)
-```shell
-platforms/android/arm64-v8a/external.sh
-cmake -DPLATFORM=android -DARCH=arm64-v8a -DCMAKE_BUILD_TYPE=Release -B build
-cmake --build build
-```

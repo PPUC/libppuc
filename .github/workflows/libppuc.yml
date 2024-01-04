@@ -1,7 +1,6 @@
 name: libppuc
 on:
   push:
-
   pull_request:
 
 defaults:
@@ -15,7 +14,7 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - id: version
@@ -28,7 +27,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   build:
-    name: Build libppuc-${{ matrix.platform }}
+    name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     needs: [ version ]
     strategy:
@@ -36,110 +35,145 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            platform: win-x64
-            platform-name: x64
+            platform: win
+            arch: x64
           - os: windows-latest
-            platform: win-x86
-            platform-name: Win32
-          - os: macos-13
-            platform: macOS-x64
-          - os: macos-13
-            platform: macOS-arm64
-          - os: macos-13
-            platform: ios-arm64
-          - os: macos-13
-            platform: tvos-arm64
+            platform: win
+            arch: x86
+          - os: macos-latest
+            platform: macos
+            arch: arm64
+          - os: macos-latest
+            platform: macos
+            arch: x64
           - os: ubuntu-latest
-            platform: linux-x64
+            platform: linux
+            arch: x64
           - os: ubuntu-latest
-            platform: android-arm64-v8a
+            platform: linux
+            arch: aarch64
     steps:
-      - uses: actions/checkout@v3
-      - name: Checkout libserialport
-        uses: actions/checkout@v3
-        with:
-          repository: PPUC/libserialport
-          path: libserialport
-      - run: mv libserialport ../libserialport
-      - if: matrix.os == 'ubuntu-latest' && matrix.type != 'raspi'
+      - uses: actions/checkout@v4
+      - if: (matrix.platform == 'win')
+        name: Add msbuild to path (win runner)
+        uses: microsoft/setup-msbuild@v1.1
+      - if: (matrix.platform == 'macos')
+        name: Add autoconf and automake (mac runner)
         run: |
-          sudo apt-get update
-          sudo apt-get install libyaml-cpp-dev
-      - if: matrix.os == 'macos-13'
+           brew install autoconf automake
+      - if: (!(matrix.platform == 'linux' && matrix.arch == 'aarch64'))
+        name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
         run: |
-          brew install yaml-cpp
-      - if: matrix.os == 'windows-latest'
-        uses: lukka/run-vcpkg@v7.4
-        with:
-          vcpkgArguments: yaml-cpp
-          vcpkgTriplet: ${{ matrix.platform-name }}-windows
-          vcpkgDirectory: deps/vcpkg
-          vcpkgGitCommitId: ce99c947b64ea3c0e274e18cc3035ca727681089
-      - name: Build libppuc-${{ matrix.platform }}
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            if [[ "${{ matrix.platform-name }}" == "Win32" ]]; then
-              cmake -G "Visual Studio 17 2022" -A ${{ matrix.platform-name }} -B build -DCMAKE_TOOLCHAIN_FILE=./deps/vcpkg/scripts/buildsystems/vcpkg.cmake -B build -DUSE_WIN32=ON
-            else
-              cmake -G "Visual Studio 17 2022" -A ${{ matrix.platform-name }} -B build -DCMAKE_TOOLCHAIN_FILE=./deps/vcpkg/scripts/buildsystems/vcpkg.cmake -B build
-            fi
-            cmake --build build --config Release
-          elif [[ "${{ matrix.os }}" == "macos-13" ]]; then
-            if [[ "${{ matrix.platform }}" == "macOS-arm64" ]]; then
-              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_OSXARM=ON
-            elif [[ "${{ matrix.platform }}" == "macOS-x64" ]]; then
-              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_OSXINTEL=ON
-            elif  [[ "${{ matrix.platform }}" == "ios-arm64" ]]; then
-              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_IOS=ON
-            elif  [[ "${{ matrix.platform }}" == "tvos-arm64" ]]; then
-              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_TVOS=ON
-            fi
-            cmake --build build/Release
-          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            if [[ "${{ matrix.platform }}" == "android-arm64-v8a" ]]; then
-              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release -DUSE_ANDROID=ON
-            else
-              cmake -DCMAKE_BUILD_TYPE=Release -B build/Release
-            fi
-            cmake --build build/Release
-          fi
-      - run: |
-          mkdir tmp
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-             cp build/Release/ppuc* tmp
+          ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+             if [[ "${{ matrix.arch }}" == "x86" ]]; then
+                cmake -G "Visual Studio 17 2022" -A Win32 -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
+             else
+                cmake -G "Visual Studio 17 2022" -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
+             fi
+             cmake --build build --config Release
           else
-             cp build/Release/libppuc* tmp
+             if [[ "$(uname)" == "Darwin" ]]; then
+                NUM_PROCS=$(sysctl -n hw.ncpu)
+             else
+                NUM_PROCS=$(nproc)
+             fi
+             cmake -DCMAKE_BUILD_TYPE=Release -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
+             cmake --build build -- -j${NUM_PROCS}
           fi
-      - uses: actions/upload-artifact@v3
+      - if: (matrix.platform == 'linux' && matrix.arch == 'aarch64')
+        name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }} (arm runner)
+        uses: pguyot/arm-runner-action@v2
         with:
-          name: libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}
-          path: tmp
+          base_image: raspios_lite_arm64:latest
+          image_additional_mb: 4096
+          cpu: cortex-a53
+          cpu_info: cpuinfo/raspberrypi_zero2_w_arm64
+          bind_mount_repository: true
+          commands: |
+            apt-get update -y --allow-releaseinfo-change
+            apt-get install --no-install-recommends -y pkg-config cmake autoconf automake libtool
+            ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
+            NUM_PROCS=$(nproc)
+            cmake -DCMAKE_BUILD_TYPE=Release -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
+            cmake --build build -- -j${NUM_PROCS}
+      - name: Prepare artifacts
+        id: artifacts
+        run: |
+          mkdir tmp
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            ARTIFACT_PATH="tmp"
+            cp build/Release/*.lib tmp
+            cp build/Release/*.dll tmp
+            cp build/Release/*.exe tmp
+          else
+            ARTIFACT_PATH="libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+            if [[ "${{ matrix.platform }}" == "macos" ]]; then
+              cp build/*.a tmp
+              cp build/*.dylib tmp
+              cp build/ppuc_test_s tmp
+              cp build/ppuc_test tmp
+            elif [[ "${{ matrix.platform }}" == "linux" ]]; then
+              cp build/*.a tmp
+              cp build/*.so.* tmp
+              cp build/ppuc_test_s tmp
+              cp build/ppuc_test tmp
+            fi
+            cd tmp
+            tar -czvf ../${ARTIFACT_PATH} *
+          fi
+          echo "artifact_path=${ARTIFACT_PATH}" >> $GITHUB_OUTPUT
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ steps.artifacts.outputs.artifact_path }}
 
   post-build:
-    runs-on: macos-13
+    runs-on: macos-latest
     needs: [ version, build ]
-    name: Build libppuc-macOS
+    name: Build libppuc-macos
     steps:
-      - uses: actions/download-artifact@v3
-      - run: |
-          mkdir libppuc-${{ needs.version.outputs.tag }}-macOS
-          lipo -create -output libppuc-${{ needs.version.outputs.tag }}-macOS/libppuc.dylib \
-             libppuc-${{ needs.version.outputs.tag }}-macOS-x64/libppuc.dylib \
-             libppuc-${{ needs.version.outputs.tag }}-macOS-arm64/libppuc.dylib
-      - uses: actions/upload-artifact@v3
+      - uses: actions/download-artifact@v4
+      - name: Unpack artifacts
+        run: |
+          cd libppuc-${{ needs.version.outputs.tag }}-macos-x64
+          tar -xzvf libppuc-${{ needs.version.outputs.tag }}-macos-x64.tar.gz
+          cd ..
+          cd libppuc-${{ needs.version.outputs.tag }}-macos-arm64
+          tar -xzvf libppuc-${{ needs.version.outputs.tag }}-macos-arm64.tar.gz
+      - name: Combine macos architectures
+        run: |
+          mkdir tmp
+          lipo -create -output tmp/libppuc-${{ needs.version.outputs.tag }}.dylib \
+              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libppuc.${{ needs.version.outputs.tag }}.dylib \
+              libppuc-${{ needs.version.outputs.tag }}-macos-x64/libppuc.${{ needs.version.outputs.tag }}.dylib
+          lipo -create -output tmp/libserialport.dylib \
+              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libserialport.dylib \
+              libppuc-${{ needs.version.outputs.tag }}-macos-x64/libserialport.dylib
+              lipo -create -output tmp/libyaml-cpp.0.8.0.dylib \
+              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libyaml-cpp.0.8.0.dylib \
+              libppuc-${{ needs.version.outputs.tag }}-macos-x64/libyaml-cpp.0.8.0.dylib
+          lipo -create -output tmp/ppuc_test \
+              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/ppuc_test \
+              libppuc-${{ needs.version.outputs.tag }}-macos-x64/ppuc_test
+          lipo -create -output tmp/ppuc_test_s \
+              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/ppuc_test_s \
+              libppuc-${{ needs.version.outputs.tag }}-macos-x64/ppuc_test_s
+      - name: Prepare artifacts
+        run: |
+          cd tmp
+          tar -czvf ../libppuc-${{ needs.version.outputs.tag }}-macos.tar.gz *
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: libppuc-${{ needs.version.outputs.tag }}-macOS
-          path: libppuc-${{ needs.version.outputs.tag }}-macOS
+          name: libppuc-${{ needs.version.outputs.tag }}-macos
+          path: libppuc-${{ needs.version.outputs.tag }}-macos.tar.gz
       - name: Package
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           zip -r libppuc-${{ needs.version.outputs.tag }}-win-x64.zip libppuc-${{ needs.version.outputs.tag }}-win-x64
-          zip -r libppuc-${{ needs.version.outputs.tag }}-win-x86.zip  libppuc-${{ needs.version.outputs.tag }}-win-x86
-          zip -r libppuc-${{ needs.version.outputs.tag }}-ios-arm64.zip  libppuc-${{ needs.version.outputs.tag }}-ios-arm64
-          zip -r libppuc-${{ needs.version.outputs.tag }}-tvos-arm64.zip  libppuc-${{ needs.version.outputs.tag }}-tvos-arm64
-          zip -r libppuc-${{ needs.version.outputs.tag }}-linux-x64.zip  libppuc-${{ needs.version.outputs.tag }}-linux-x64
-          zip -r libppuc-${{ needs.version.outputs.tag }}-android-arm64-v8a.zip  libppuc-${{ needs.version.outputs.tag }}-android-arm64-v8a
-          zip -r libppuc-${{ needs.version.outputs.tag }}-macOS.zip  libppuc-${{ needs.version.outputs.tag }}-macOS
+          zip -r libppuc-${{ needs.version.outputs.tag }}-win-x86.zip libppuc-${{ needs.version.outputs.tag }}-win-x86
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
@@ -148,8 +182,8 @@ jobs:
           files: |
             libppuc-${{ needs.version.outputs.tag }}-win-x64.zip
             libppuc-${{ needs.version.outputs.tag }}-win-x86.zip
-            libppuc-${{ needs.version.outputs.tag }}-ios-arm64.zip
-            libppuc-${{ needs.version.outputs.tag }}-tvos-arm64.zip
-            libppuc-${{ needs.version.outputs.tag }}-linux-x64.zip
-            libppuc-${{ needs.version.outputs.tag }}-android-arm64-v8a.zip
-            libppuc-${{ needs.version.outputs.tag }}-macOS.zip
+            libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libppuc-${{ needs.version.outputs.tag }}-macos-arm64.tar.gz
+            libppuc-${{ needs.version.outputs.tag }}-macos-x64/libppuc-${{ needs.version.outputs.tag }}-macos-x64.tar.gz
+            libppuc-${{ needs.version.outputs.tag }}-macos.tar.gz
+            libppuc-${{ needs.version.outputs.tag }}-linux-x64/libppuc-${{ needs.version.outputs.tag }}-linux-x64.tar.gz
+            libppuc-${{ needs.version.outputs.tag }}-linux-aarch64/libppuc-${{ needs.version.outputs.tag }}-linux-aarch64.tar.gz

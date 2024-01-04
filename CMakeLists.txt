@@ -12,16 +12,6 @@ message(STATUS "ARCH: ${ARCH}")
 message(STATUS "BUILD_SHARED: ${BUILD_SHARED}")
 message(STATUS "BUILD_STATIC: ${BUILD_STATIC}")
 
-if(PLATFORM STREQUAL "ios")
-   set(CMAKE_SYSTEM_NAME iOS)
-elseif(PLATFORM STREQUAL "tvos")
-   set(CMAKE_SYSTEM_NAME tvOS)
-elseif(PLATFORM STREQUAL "android")
-   set(CMAKE_SYSTEM_NAME Android)
-   set(CMAKE_SYSTEM_VERSION 30)
-   set(CMAKE_ANDROID_ARCH_ABI arm64-v8a)
-endif()
-
 file(READ src/PPUC.h version)
 string(REGEX MATCH "PPUC_VERSION_MAJOR[ ]+([0-9]+)" _tmp ${version})
 set(VERSION_MAJOR "${CMAKE_MATCH_1}")
@@ -46,9 +36,6 @@ elseif(PLATFORM STREQUAL "macos")
    endif()
    set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
    set(CMAKE_INSTALL_RPATH "@executable_path")
-elseif(PLATFORM STREQUAL "ios" OR PLATFORM STREQUAL "tvos")
-   set(CMAKE_OSX_DEPLOYMENT_TARGET 16.0)
-   set(CMAKE_OSX_ARCHITECTURES arm64)
 elseif(PLATFORM STREQUAL "linux" OR PLATFORM STREQUAL "android")
    set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
    set(CMAKE_INSTALL_RPATH "$ORIGIN")
@@ -120,16 +107,16 @@ if(BUILD_SHARED)
 
       if(PLATFORM STREQUAL "win")
          add_custom_command(TARGET ppuc_test POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/libserialport.lib" "$<TARGET_FILE_DIR:ppuc_test>"
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.dll" "$<TARGET_FILE_DIR:ppuc_test>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/*.lib" "$<TARGET_FILE_DIR:ppuc_test>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.dll" "$<TARGET_FILE_DIR:ppuc_test>"
          )
       elseif(PLATFORM STREQUAL "macos")
          add_custom_command(TARGET ppuc_test POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.dylib" "$<TARGET_FILE_DIR:ppuc_test>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.dylib" "$<TARGET_FILE_DIR:ppuc_test>"
          )
       elseif(PLATFORM STREQUAL "linux")
          add_custom_command(TARGET ppuc_test POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.so.0" "$<TARGET_FILE_DIR:ppuc_test>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.so.*" "$<TARGET_FILE_DIR:ppuc_test>"
          )
       endif()
    endif()
@@ -168,8 +155,8 @@ if(BUILD_STATIC)
          target_link_libraries(ppuc_test_s PUBLIC ppuc_static libserialport libyaml-cpp)
 
          add_custom_command(TARGET ppuc_test_s POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/libserialport.lib" "$<TARGET_FILE_DIR:ppuc_test_s>"
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.dll" "$<TARGET_FILE_DIR:ppuc_test_s>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/*.lib" "$<TARGET_FILE_DIR:ppuc_test_s>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.dll" "$<TARGET_FILE_DIR:ppuc_test_s>"
          )
       elseif(PLATFORM STREQUAL "macos")
          target_link_directories(ppuc_test_s PUBLIC
@@ -178,7 +165,7 @@ if(BUILD_STATIC)
          target_link_libraries(ppuc_test_s PUBLIC ppuc_static serialport yaml-cpp)
 
          add_custom_command(TARGET ppuc_test_s POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.dylib" "$<TARGET_FILE_DIR:ppuc_test_s>"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.dylib" "$<TARGET_FILE_DIR:ppuc_test_s>"
          )
       elseif(PLATFORM STREQUAL "linux")
          target_link_directories(ppuc_test_s PUBLIC
@@ -187,7 +174,7 @@ if(BUILD_STATIC)
          target_link_libraries(ppuc_test_s PUBLIC ppuc_static -l:libserialport.so.0 -l:libyaml-cpp.so.0.8.0)
 
          add_custom_command(TARGET ppuc_test_s POST_BUILD
-           COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.so.0" "$<TARGET_FILE_DIR:ppuc_test_s>"
+           COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.so.*" "$<TARGET_FILE_DIR:ppuc_test_s>"
          )
       endif()
    endif()
