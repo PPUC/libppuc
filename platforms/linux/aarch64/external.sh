@@ -60,5 +60,5 @@ cp build/libyaml-cpp.a ../../third-party/build-libs/linux/aarch64/
 rm -rf build
 cmake -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -B build
 cmake --build build --config Release
-cp build/libyaml-cpp.so.* ../../third-party/runtime-libs/linux/aarch64/
+cp -P build/libyaml-cpp.so.* ../../third-party/runtime-libs/linux/aarch64/
 cd ..
