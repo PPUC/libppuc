@@ -226,9 +226,9 @@ bool PPUC::Connect() {
             n_pwmOutput["fastFlipSwitch"].as<uint32_t>()));
         std::string c_type = n_pwmOutput["type"].as<std::string>();
         uint32_t type = PWM_TYPE_SOLENOID;  // "coil"
-        if (strcmp(c_type.c_str(), "flasher")) {
+        if (strcmp(c_type.c_str(), "flasher") == 0) {
           type = PWM_TYPE_FLASHER;
-        } else if (strcmp(c_type.c_str(), "lamp")) {
+        } else if (strcmp(c_type.c_str(), "lamp") == 0) {
           type = PWM_TYPE_LAMP;
         }
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
