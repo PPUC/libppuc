@@ -1,18 +1,18 @@
 #pragma once
 
-#include <thread>
-#include <queue>
-#include <cstring>
 #include <inttypes.h>
-#include <mutex>
-#include <cstdio>
 #include <stdarg.h>
-// @todo better handling of external lib
-#include "../../libserialport/src/SerialPort.h"
-#include "Event.h"
-#include "PPUC.h"
+#include <cstring>
+#include <cstdio>
+#include <thread>
+#include <mutex>
+#include <queue>
 
-#if defined(_WIN32) || defined(_WIN64)
+#include "PPUC.h"
+#include "io-boards/Event.h"
+#include "libserialport.h"
+
+#if _MSC_VER
 #define CALLBACK __stdcall
 #else
 #define CALLBACK
@@ -24,74 +24,67 @@
 
 #define RS485_COMM_MAX_BOARDS 16
 
-#if defined(_WIN32) || defined(_WIN64)
+#if _MSC_VER
 #define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
 #elif defined(__APPLE__)
 #define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
-#elif defined(__ANDROID__)
-#define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
 #else
-// defined (__linux__)
 #define RS485_COMM_MAX_SERIAL_WRITE_AT_ONCE 256
 #endif
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
 
-#ifdef __ANDROID__
-typedef void *(*RS485_AndroidGetJNIEnvFunc)();
-#endif
+typedef void(CALLBACK* PPUC_LogMessageCallback)(const char* format,
+                                                va_list args,
+                                                const void* userData);
 
-typedef void(CALLBACK *PPUC_LogMessageCallback)(const char *format, va_list args, const void *userData);
+class RS485Comm {
+ public:
+  RS485Comm();
+  ~RS485Comm();
 
-class RS485Comm
-{
-public:
-   RS485Comm();
-   ~RS485Comm();
+  void SetLogMessageCallback(PPUC_LogMessageCallback callback,
+                             const void* userData);
 
-#ifdef __ANDROID__
-   void SetAndroidGetJNIEnvFunc(RS485_AndroidGetJNIEnvFunc func);
-#endif
+  bool Connect(const char* device);
+  void Disconnect();
 
-   void SetLogMessageCallback(PPUC_LogMessageCallback callback, const void *userData);
+  void Run();
 
-   bool Connect(const char *device);
-   void Disconnect();
+  void QueueEvent(Event* event);
+  bool SendConfigEvent(ConfigEvent* configEvent);
 
-   void Run();
+  void RegisterSwitchBoard(uint8_t number);
+  PPUCSwitchState* GetNextSwitchState();
 
-   void QueueEvent(Event *event);
-   bool SendConfigEvent(ConfigEvent *configEvent);
+  void SetDebug(bool debug);
 
-   void RegisterSwitchBoard(uint8_t number);
-   PPUCSwitchState *GetNextSwitchState();
+ private:
+  void LogMessage(const char* format, ...);
 
-   void SetDebug(bool debug);
+  bool SendEvent(Event* event);
+  Event* receiveEvent();
+  void PollEvents(int board);
 
-private:
-   void LogMessage(const char *format, ...);
+  PPUC_LogMessageCallback m_logMessageCallback = nullptr;
+  const void* m_logMessageUserData = nullptr;
 
-   bool SendEvent(Event *event);
-   Event *receiveEvent();
-   void PollEvents(int board);
+  uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
+  uint8_t m_switchBoardCounter = 0;
+  bool m_activeBoards[RS485_COMM_MAX_BOARDS] = {false};
 
-   PPUC_LogMessageCallback m_logMessageCallback = nullptr;
-   const void *m_logMessageUserData = nullptr;
+  bool m_debug = false;
 
-   uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
-   uint8_t m_switchBoardCounter = 0;
-   bool m_activeBoards[RS485_COMM_MAX_BOARDS] = { false };
+  // Event message buffers, we need two independent for events and config events
+  // because of threading.
+  uint8_t m_msg[7];
+  uint8_t m_cmsg[12];
 
-   bool m_debug = false;
-
-   // Event message buffers, we need two independent for events and config events because of threading.
-   uint8_t m_msg[7];
-   uint8_t m_cmsg[12];
-
-   SerialPort m_serialPort;
-   std::thread *m_pThread;
-   std::queue<Event *> m_events;
-   std::queue<PPUCSwitchState *> m_switches;
-   std::mutex m_eventQueueMutex;
-   std::mutex m_switchesQueueMutex;
+  struct sp_port* m_pSerialPort;
+  struct sp_port_config* m_pSerialPortConfig;
+  std::thread* m_pThread;
+  std::queue<Event*> m_events;
+  std::queue<PPUCSwitchState*> m_switches;
+  std::mutex m_eventQueueMutex;
+  std::mutex m_switchesQueueMutex;
 };
