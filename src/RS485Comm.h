@@ -2,10 +2,10 @@
 
 #include <thread>
 #include <queue>
-#include <string>
+#include <cstring>
 #include <inttypes.h>
 #include <mutex>
-#include <stdio.h>
+#include <cstdio>
 #include <stdarg.h>
 // @todo better handling of external lib
 #include "../../libserialport/src/SerialPort.h"
