@@ -37,6 +37,8 @@ void PPUC::LoadConfiguration(const char* configFile) {
   m_platform = PLATFORM_WPC;
   if (strcmp(c_platform.c_str(), "DE") == 0) {
     m_platform = PLATFORM_DATA_EAST;
+  } else if (strcmp(c_platform.c_str(), "SYS4") == 0) {
+    m_platform = PLATFORM_SYS4;
   } else if (strcmp(c_platform.c_str(), "SYS11") == 0) {
     m_platform = PLATFORM_SYS11;
   }
