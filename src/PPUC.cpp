@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "Adafruit_NeoPixel.h"
 #include "RS485Comm.h"
 #include "io-boards/Event.h"
 #include "io-boards/PPUCPlatforms.h"
@@ -24,6 +25,45 @@ void PPUC::SetLogMessageCallback(PPUC_LogMessageCallback callback,
 }
 
 void PPUC::Disconnect() { m_pRS485Comm->Disconnect(); }
+
+uint8_t ResolveLedType(std::string type) {
+  if (type.compare("RGB")) return NEO_RGB;
+  if (type.compare("RBG")) return NEO_RBG;
+  if (type.compare("GRB")) return NEO_GRB;
+  if (type.compare("GBR")) return NEO_GBR;
+  if (type.compare("BRG")) return NEO_BRG;
+  if (type.compare("BGR")) return NEO_BGR;
+
+  if (type.compare("WRGB")) return NEO_WRGB;
+  if (type.compare("WRBG")) return NEO_WRBG;
+  if (type.compare("WGRB")) return NEO_WGRB;
+  if (type.compare("WGBR")) return NEO_WGBR;
+  if (type.compare("WBRG")) return NEO_WBRG;
+  if (type.compare("WBGR")) return NEO_WBGR;
+
+  if (type.compare("RWGB")) return NEO_RWGB;
+  if (type.compare("RWBG")) return NEO_RWBG;
+  if (type.compare("RGWB")) return NEO_RGWB;
+  if (type.compare("RGBW")) return NEO_RGBW;
+  if (type.compare("RBWG")) return NEO_RBWG;
+  if (type.compare("RBGW")) return NEO_RBGW;
+
+  if (type.compare("GWRB")) return NEO_GWRB;
+  if (type.compare("GWBR")) return NEO_GWBR;
+  if (type.compare("GRWB")) return NEO_GRWB;
+  if (type.compare("GRBW")) return NEO_GRBW;
+  if (type.compare("GBWR")) return NEO_GBWR;
+  if (type.compare("GBRW")) return NEO_GBRW;
+
+  if (type.compare("BWRG")) return NEO_BWRG;
+  if (type.compare("BWGR")) return NEO_BWGR;
+  if (type.compare("BRWG")) return NEO_BRWG;
+  if (type.compare("BRGW")) return NEO_BRGW;
+  if (type.compare("BGWR")) return NEO_BGWR;
+  if (type.compare("BGRW")) return NEO_BGRW;
+
+  return 0;
+}
 
 void PPUC::LoadConfiguration(const char* configFile) {
   // Load config file. But options set via command line are preferred.
@@ -81,9 +121,6 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
     m_pRS485Comm->SendConfigEvent(new ConfigEvent(
         board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
         (uint8_t)CONFIG_TOPIC_LED_NUMBER, n_item["ledNumber"].as<uint32_t>()));
-    m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-        board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
-        (uint8_t)CONFIG_TOPIC_BRIGHTNESS, n_item["brightness"].as<uint32_t>()));
 
     uint32_t color;
     std::stringstream ss;
@@ -248,6 +285,11 @@ bool PPUC::Connect() {
             n_ledStripe["board"].as<uint8_t>(),
             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
             (uint8_t)CONFIG_TOPIC_PORT, n_ledStripe["port"].as<uint32_t>()));
+        m_pRS485Comm->SendConfigEvent(
+            new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
+                            (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
+                            (uint8_t)CONFIG_TOPIC_TYPE,
+                            ResolveLedType(n_ledStripe["ledType"].as<std::string>())));
         m_pRS485Comm->SendConfigEvent(
             new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,

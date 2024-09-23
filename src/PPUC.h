@@ -66,6 +66,7 @@ class PPUCAPI PPUC {
  private:
   YAML::Node m_ppucConfig;
   RS485Comm* m_pRS485Comm;
+  uint8_t ResolveLedType(std::string type);
 
   bool m_debug = false;
   char* m_rom;
