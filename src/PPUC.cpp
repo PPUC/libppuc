@@ -26,7 +26,7 @@ void PPUC::SetLogMessageCallback(PPUC_LogMessageCallback callback,
 
 void PPUC::Disconnect() { m_pRS485Comm->Disconnect(); }
 
-uint8_t ResolveLedType(std::string type) {
+uint8_t PPUC::ResolveLedType(std::string type) {
   if (type.compare("RGB")) return NEO_RGB;
   if (type.compare("RBG")) return NEO_RBG;
   if (type.compare("GRB")) return NEO_GRB;
