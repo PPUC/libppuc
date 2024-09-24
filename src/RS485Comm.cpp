@@ -119,7 +119,18 @@ bool RS485Comm::Connect(const char* pDevice) {
     SendEvent(new Event(EVENT_NULL));
   }
 
+  // End previous game. The reset timer of the boards is configured to 3 seconds
+  // to reset all devices.
   SendEvent(new Event(EVENT_RESET));
+  // Wait before continuing.
+  std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+
+  for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++) {
+    // Let the boards synchronize themselves again to the RS485 bus.
+    SendEvent(new Event(EVENT_NULL));
+    SendConfigEvent(new ConfigEvent(i));
+    SendEvent(new Event(EVENT_NULL));
+  }
 
   // Wait before continuing.
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
