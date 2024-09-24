@@ -285,11 +285,11 @@ bool PPUC::Connect() {
             n_ledStripe["board"].as<uint8_t>(),
             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
             (uint8_t)CONFIG_TOPIC_PORT, n_ledStripe["port"].as<uint32_t>()));
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
-                            (uint8_t)CONFIG_TOPIC_TYPE,
-                            ResolveLedType(n_ledStripe["ledType"].as<std::string>())));
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            n_ledStripe["board"].as<uint8_t>(),
+            (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
+            (uint8_t)CONFIG_TOPIC_TYPE,
+            ResolveLedType(n_ledStripe["ledType"].as<std::string>())));
         m_pRS485Comm->SendConfigEvent(
             new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
@@ -320,6 +320,12 @@ bool PPUC::Connect() {
 
     // Wait before continuing.
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    // Turn on the GI for non WPC platforms.
+    if (PLATFORM_WPC != m_platform) {
+      m_pRS485Comm->QueueEvent(
+          new Event(EVENT_SOURCE_GI, /* string */ 1, /* full brightness */ 8));
+    }
 
     // Tell I/O boards to read initial switch states, for example coin door
     // closed.
