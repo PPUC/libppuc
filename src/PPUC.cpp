@@ -141,6 +141,14 @@ bool PPUC::Connect() {
           n_board["number"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PLATFORM, 0,
           (uint8_t)CONFIG_TOPIC_PLATFORM, m_platform));
 
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          n_board["number"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_COIN_DOOR_CLOSED_SWITCH, 0,
+          (uint8_t)CONFIG_TOPIC_NUMBER, m_ppucConfig["coinDoorClosedSwitch"].as<uint8_t>()));
+
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          n_board["number"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_GAME_ON_SOLENOID, 0,
+          (uint8_t)CONFIG_TOPIC_NUMBER, m_ppucConfig["gameOnSolenoid"].as<uint8_t>()));
+
       if (n_board["pollEvents"].as<bool>()) {
         m_pRS485Comm->RegisterSwitchBoard(n_board["number"].as<uint8_t>());
       }
