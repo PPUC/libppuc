@@ -345,7 +345,7 @@ void RS485Comm::PollEvents(int board) {
   Event* event = new Event(EVENT_POLL_EVENTS, 1, board);
   if (SendEvent(event)) {
     // Wait until the i/o board switched to RS485 send mode.
-    std::this_thread::sleep_for(std::chrono::microseconds(200));
+    std::this_thread::sleep_for(std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
 
     bool null_event = false;
     Event* event_recv;
@@ -381,6 +381,6 @@ void RS485Comm::PollEvents(int board) {
     }
 
     // Wait until the i/o board switched back to RS485 receive mode.
-    std::this_thread::sleep_for(std::chrono::microseconds(500));
+    std::this_thread::sleep_for(std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
   }
 }
