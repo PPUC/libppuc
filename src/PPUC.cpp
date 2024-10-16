@@ -306,7 +306,7 @@ bool PPUC::Connect() {
             new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
                             (uint8_t)CONFIG_TOPIC_BRIGHTNESS,
-                            n_ledStripe["brightness"].as<uint8_t>()));
+                            n_ledStripe["brightness"].as<uint32_t>()));
         m_pRS485Comm->SendConfigEvent(
             new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
