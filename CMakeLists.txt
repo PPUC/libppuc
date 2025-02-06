@@ -69,7 +69,11 @@ if(BUILD_SHARED)
          third-party/build-libs/${PLATFORM}/${ARCH}
          third-party/runtime-libs/${PLATFORM}/${ARCH}
       )
-      target_link_libraries(ppuc_shared PUBLIC libserialport yaml-cpp)
+      if(ARCH STREQUAL "x64")
+         target_link_libraries(ppuc_shared PUBLIC libserialport64 yaml-cpp)
+      else()
+         target_link_libraries(ppuc_shared PUBLIC libserialport yaml-cpp)
+      endif()
    elseif(PLATFORM STREQUAL "macos")
       target_link_directories(ppuc_shared PUBLIC
          third-party/runtime-libs/${PLATFORM}/${ARCH}
