@@ -111,13 +111,9 @@ jobs:
             if [[ "${{ matrix.platform }}" == "macos" ]]; then
               cp build/*.a tmp
               cp build/*.dylib tmp
-              cp build/ppuc_test_s tmp
-              cp build/ppuc_test tmp
             elif [[ "${{ matrix.platform }}" == "linux" ]]; then
               cp build/*.a tmp
               cp build/*.so.* tmp
-              cp build/ppuc_test_s tmp
-              cp build/ppuc_test tmp
             fi
             cd tmp
             tar -czvf ../${ARTIFACT_PATH} *
@@ -154,12 +150,6 @@ jobs:
               lipo -create -output tmp/libyaml-cpp.0.8.0.dylib \
               libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libyaml-cpp.0.8.0.dylib \
               libppuc-${{ needs.version.outputs.tag }}-macos-x64/libyaml-cpp.0.8.0.dylib
-          lipo -create -output tmp/ppuc_test \
-              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/ppuc_test \
-              libppuc-${{ needs.version.outputs.tag }}-macos-x64/ppuc_test
-          lipo -create -output tmp/ppuc_test_s \
-              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/ppuc_test_s \
-              libppuc-${{ needs.version.outputs.tag }}-macos-x64/ppuc_test_s
       - name: Prepare artifacts
         run: |
           cd tmp
