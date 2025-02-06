@@ -3,7 +3,7 @@
 set -e
 
 IO_BOARDS_SHA=f1a06654721f62f080441732d4c82d0a0c821582
-LIBSERIALPORT_SHA=fd20b0fc5a34cd7f776e4af6c763f59041de223b
+LIBSERIALPORT_SHA=21b3dfe5f68c205be4086469335fd2fc2ce11ed2
 YAML_CPP_VERSION=0.8.0
 
 echo "Building libraries..."
@@ -35,10 +35,13 @@ curl -sL https://github.com/sigrokproject/libserialport/archive/${LIBSERIALPORT_
 unzip libserialport.zip
 cd libserialport-$LIBSERIALPORT_SHA
 cp libserialport.h ../../third-party/include
+patch libserialport.vcxproj < ../../platforms/win/x64/libserialport/001.patch
 msbuild.exe libserialport.sln -p:Configuration=Release -p:Platform=x64
-cp x64/Release/libserialport.lib ../../third-party/build-libs/win/x64/
-cp x64/Release/libserialport.dll ../../third-party/runtime-libs/win/x64/
+cp x64/Release/libserialport64.lib ../../third-party/build-libs/win/x64
+cp x64/Release/libserialport64.dll ../../third-party/runtime-libs/win/x64
 cd ..
+
+
 #
 # build libyaml-cpp and copy to platform/arch
 #

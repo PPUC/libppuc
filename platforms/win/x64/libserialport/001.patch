@@ -1,0 +1,24 @@
+--- libserialport.vcxproj 	2024-01-06 08:32:48
++++ libserialport.vcxproj	2024-01-06 08:46:52
+@@ -49,12 +49,14 @@
+     <CharacterSet>Unicode</CharacterSet>
+   </PropertyGroup>
+   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
++    <TargetName>libserialport64</TargetName>
+     <ConfigurationType>DynamicLibrary</ConfigurationType>
+     <UseDebugLibraries>true</UseDebugLibraries>
+     <PlatformToolset>v142</PlatformToolset>
+     <CharacterSet>Unicode</CharacterSet>
+   </PropertyGroup>
+   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
++    <TargetName>libserialport64</TargetName>
+     <ConfigurationType>DynamicLibrary</ConfigurationType>
+     <UseDebugLibraries>false</UseDebugLibraries>
+     <PlatformToolset>v142</PlatformToolset>
+@@ -81,4 +83,4 @@
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+   <ImportGroup Label="ExtensionTargets">
+   </ImportGroup>
+-</Project>
+\ No newline at end of file
++</Project>
