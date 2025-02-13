@@ -128,28 +128,4 @@ if(BUILD_STATIC)
       LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
    )
    install(FILES src/PPUC.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
-
-   if(PLATFORM STREQUAL "win")
-      target_link_directories(ppuc_static PUBLIC
-         third-party/build-libs/${PLATFORM}/${ARCH}
-         third-party/runtime-libs/${PLATFORM}/${ARCH}
-      )
-
-      if(ARCH STREQUAL "x64")
-         target_link_libraries(ppuc_static PUBLIC libserialport64 yaml-cpp)
-      else()
-         target_link_libraries(ppuc_static PUBLIC libserialport yaml-cpp)
-      endif()
-   elseif(PLATFORM STREQUAL "macos")
-      target_link_directories(ppuc_static PUBLIC
-         third-party/runtime-libs/${PLATFORM}/${ARCH}
-      )
-      target_link_libraries(ppuc_static PUBLIC serialport yaml-cpp)
-   elseif(PLATFORM STREQUAL "linux")
-      target_link_directories(ppuc_static PUBLIC
-         third-party/runtime-libs/${PLATFORM}/${ARCH}
-      )
-      target_link_libraries(ppuc_static PUBLIC serialport yaml-cpp)
-   endif()
-
 endif()
