@@ -38,28 +38,28 @@ struct PPUCSwitchState {
 };
 
 struct PPUCSwitch {
-  u_int8_t number;
+  uint8_t number;
   std::string description;
 
-  PPUCSwitch(u_int8_t n, const std::string& d)
+  PPUCSwitch(uint8_t n, const std::string& d)
   : number(n), description(d) {}
 };
 
 struct PPUCCoil {
-  u_int8_t type;
-  u_int8_t number;
+  uint8_t type;
+  uint8_t number;
   std::string description;
 
-  PPUCCoil(u_int8_t t, u_int8_t n,const std::string& d)
+  PPUCCoil(uint8_t t, uint8_t n,const std::string& d)
   : type(t), number(n), description(d) {}
 };
 
 struct PPUCLamp {
-  u_int8_t type;
-  u_int8_t number;
+  uint8_t type;
+  uint8_t number;
   std::string description;
 
-  PPUCLamp(u_int8_t t, u_int8_t n, const std::string& d)
+  PPUCLamp(uint8_t t, uint8_t n, const std::string& d)
   : type(t), number(n), description(d) {}
 };
 
