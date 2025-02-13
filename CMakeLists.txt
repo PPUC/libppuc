@@ -4,7 +4,11 @@ set(PLATFORM "win" CACHE STRING "Platform")
 set(ARCH "x64" CACHE STRING "Arch")
 
 option(BUILD_SHARED "Option to build shared library" ON)
-option(BUILD_STATIC "Option to build static library" ON)
+if(PLATFORM STREQUAL "win")
+   option(BUILD_STATIC "Option to build static library" OFF)
+else()
+   option(BUILD_STATIC "Option to build static library" ON)
+endif()
 
 message(STATUS "PLATFORM: ${PLATFORM}")
 message(STATUS "ARCH: ${ARCH}")
