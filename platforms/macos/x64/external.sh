@@ -4,14 +4,14 @@ set -e
 
 IO_BOARDS_SHA=f1a06654721f62f080441732d4c82d0a0c821582
 LIBSERIALPORT_SHA=21b3dfe5f68c205be4086469335fd2fc2ce11ed2
-YAML_CPP_VERSION=0.8.0
+YAML_CPP_SHA=39f737443b05e4135e697cb91c2b7b18095acd53
 
 NUM_PROCS=$(sysctl -n hw.ncpu)
 
 echo "Building libraries..."
 echo "  IO_BOARDS_SHA: ${IO_BOARDS_SHA}"
 echo "  LIBSERIALPORT_SHA: ${LIBSERIALPORT_SHA}"
-echo "  YAML_CPP_VERSION: ${YAML_CPP_VERSION}"
+echo "  YAML_CPP_SHA: ${YAML_CPP_SHA}"
 echo "  NUM_PROCS: ${NUM_PROCS}"
 echo ""
 
@@ -49,10 +49,10 @@ cd ..
 # build libyaml-cpp and copy to platform/arch
 #
 
-curl -sL https://github.com/jbeder/yaml-cpp/archive/refs/tags/${YAML_CPP_VERSION}.zip -o yaml-cpp.zip
+curl -sL https://github.com/jbeder/yaml-cpp/archive/refs/tags/${YAML_CPP_SHA}.zip -o yaml-cpp.zip
 unzip yaml-cpp.zip
 
-cd yaml-cpp-${YAML_CPP_VERSION}
+cd yaml-cpp-${YAML_CPP_SHA}
 cp -r include/yaml-cpp ../../third-party/include/
 cmake -DYAML_BUILD_SHARED_LIBS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF -DYAML_CPP_BUILD_TOOLS=OFF -DYAML_CPP_FORMAT_SOURCE=OFF -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 -B build
 cmake --build build --config Release
