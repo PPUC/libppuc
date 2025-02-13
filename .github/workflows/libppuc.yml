@@ -105,7 +105,6 @@ jobs:
             ARTIFACT_PATH="tmp"
             cp build/Release/*.lib tmp
             #cp build/Release/*.dll tmp
-            cp build/Release/*.exe tmp
           else
             ARTIFACT_PATH="libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
             if [[ "${{ matrix.platform }}" == "macos" ]]; then
