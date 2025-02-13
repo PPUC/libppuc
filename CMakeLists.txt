@@ -110,7 +110,7 @@ if(BUILD_STATIC)
 
    if(PLATFORM STREQUAL "win")
       set_target_properties(ppuc_static PROPERTIES
-         OUTPUT_NAME "ppuc_static"
+         OUTPUT_NAME "ppuc-portable"
       )
    else()
       set_target_properties(ppuc_static PROPERTIES
@@ -122,4 +122,57 @@ if(BUILD_STATIC)
       LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
    )
    install(FILES src/PPUC.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
+
+   if(PLATFORM STREQUAL "win")
+      target_link_directories(ppuc-portable PUBLIC
+         third-party/build-libs/${PLATFORM}/${ARCH}
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+
+      if(ARCH STREQUAL "x64")
+         target_link_libraries(ppuc-portable PUBLIC ppuc_static libserialport64 yaml-cpp)
+      else()
+         target_link_libraries(ppuc-portable PUBLIC ppuc_static libserialport yaml-cpp)
+      endif()
+   elseif(PLATFORM STREQUAL "macos")
+      target_link_directories(ppuc-portable PUBLIC
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      target_link_libraries(ppuc-portable PUBLIC ppuc_static serialport yaml-cpp)
+   elseif(PLATFORM STREQUAL "linux")
+      target_link_directories(ppuc-portable PUBLIC
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      target_link_libraries(ppuc-portable PUBLIC ppuc_static serialport yaml-cpp)
+   endif()
+
+   if(POST_BUILD_COPY_EXT_LIBS)
+      if(PLATFORM STREQUAL "win")
+         if(ARCH STREQUAL "x64")
+            add_custom_command(TARGET ppuc-portable POST_BUILD
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/libserialport64.lib" "$<TARGET_FILE_DIR:ppuc-portable>"
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport64.dll" "$<TARGET_FILE_DIR:ppuc-portable>"
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/yaml-cpp.lib" "$<TARGET_FILE_DIR:ppuc-portable>"
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/yaml-cpp.dll" "$<TARGET_FILE_DIR:ppuc-portable>"
+            )
+         else()
+            add_custom_command(TARGET ppuc-portable POST_BUILD
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/libserialport.lib" "$<TARGET_FILE_DIR:ppuc-portable>"
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/libserialport.dll" "$<TARGET_FILE_DIR:ppuc-portable>"
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}/${ARCH}/yaml-cpp.lib" "$<TARGET_FILE_DIR:ppuc-portable>"
+               COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/yaml-cpp.dll" "$<TARGET_FILE_DIR:ppuc-portable>"
+            )
+         endif()
+      elseif(PLATFORM STREQUAL "macos")
+         add_custom_command(TARGET ppuc-portable POST_BUILD
+            COMMAND cp -a "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.dylib" "$<TARGET_FILE_DIR:ppuc-portable>"
+         )
+      elseif(PLATFORM STREQUAL "linux")
+         add_custom_command(TARGET ppuc-portable POST_BUILD
+            COMMAND cp -a "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.so" "$<TARGET_FILE_DIR:ppuc-portable>"
+            COMMAND cp -a "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}/*.so.*" "$<TARGET_FILE_DIR:ppuc-portable>"
+         )
+      endif()
+   endif()
+
 endif()
