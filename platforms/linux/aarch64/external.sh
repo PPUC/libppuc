@@ -49,7 +49,7 @@ cd ..
 # build libyaml-cpp and copy to platform/arch
 #
 
-curl -sL https://github.com/jbeder/yaml-cpp/archive/refs/tags/${YAML_CPP_SHA}.zip -o yaml-cpp.zip
+curl -sL https://github.com/jbeder/yaml-cpp/archive/${YAML_CPP_SHA}.zip -o yaml-cpp.zip
 unzip yaml-cpp.zip
 
 cd yaml-cpp-${YAML_CPP_SHA}
