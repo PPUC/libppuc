@@ -250,7 +250,7 @@ Event* RS485Comm::receiveEvent() {
                 std::chrono::steady_clock::now() - start))
                .count() < 8000) {
       // printf("Available %d\n", m_serialPort.Available());
-      if (sp_input_waiting(m_pSerialPort) >= 6) {
+      if ((int) sp_input_waiting(m_pSerialPort) >= 6) {
         uint8_t startByte;
         sp_blocking_read(m_pSerialPort, &startByte, 1,
                          RS485_COMM_SERIAL_READ_TIMEOUT);

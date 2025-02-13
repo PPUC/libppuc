@@ -129,6 +129,9 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
     m_pRS485Comm->SendConfigEvent(
         new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
                         (uint8_t)CONFIG_TOPIC_COLOR, color));
+
+    m_lamps.push_back(PPUCLamp((uint8_t)type, n_item["number"].as<uint8_t>(),
+                               n_item["description"].as<std::string>()));
   }
 }
 
@@ -177,6 +180,10 @@ bool PPUC::Connect() {
             n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
             index++, (uint8_t)CONFIG_TOPIC_NUMBER,
             n_switch["number"].as<uint32_t>()));
+
+        m_switches.push_back(
+            PPUCSwitch(n_switch["number"].as<uint8_t>(),
+                       n_switch["description"].as<std::string>()));
       }
     }
 
@@ -285,6 +292,10 @@ bool PPUC::Connect() {
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
             n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
             index++, (uint8_t)CONFIG_TOPIC_TYPE, type));
+
+        m_coils.push_back(
+            PPUCCoil((uint8_t)type, n_pwmOutput["number"].as<uint8_t>(),
+                     n_pwmOutput["description"].as<std::string>()));
       }
     }
 
@@ -378,4 +389,137 @@ void PPUC::StartUpdates() {
 
 void PPUC::StopUpdates() {
   m_pRS485Comm->QueueEvent(new Event(EVENT_RUN, 1, 0));
+}
+
+std::vector<PPUCCoil> PPUC::GetCoils() {
+  std::sort(
+      m_coils.begin(), m_coils.end(),
+      [](const PPUCCoil& a, const PPUCCoil& b) { return a.number < b.number; });
+
+  return m_coils;
+}
+
+std::vector<PPUCLamp> PPUC::GetLamps() {
+  std::sort(
+      m_lamps.begin(), m_lamps.end(),
+      [](const PPUCLamp& a, const PPUCLamp& b) { return a.number < b.number; });
+
+  return m_lamps;
+}
+
+std::vector<PPUCSwitch> PPUC::GetSwitches() {
+  std::sort(m_switches.begin(), m_switches.end(),
+            [](const PPUCSwitch& a, const PPUCSwitch& b) {
+              return a.number < b.number;
+            });
+
+  return m_switches;
+}
+
+void PPUC::CoilTest() {
+  printf("Coil Test\n");
+  printf("=========\n");
+
+  for (const auto& coil : GetCoils()) {
+    if (coil.type == PWM_TYPE_SOLENOID) {
+      printf("\nNumber: %d\nDescription: %s\n", coil.number,
+             coil.description.c_str());
+      SetSolenoidState(coil.number, 1);
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      SetSolenoidState(coil.number, 0);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+  }
+}
+
+void PPUC::LampTest() {
+  printf("Lamp Test\n");
+  printf("=========\n");
+
+  for (const auto& lamp : GetLamps()) {
+    if (lamp.type == LED_TYPE_LAMP) {
+      printf("\nNumber: %d\nDescription: %s\n", lamp.number,
+             lamp.description.c_str());
+      SetLampState(lamp.number, 1);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+      SetLampState(lamp.number, 0);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
+    for (const auto& coil : GetCoils()) {
+      if (coil.type == PWM_TYPE_LAMP) {
+        printf("\nNumber: %d\nDescription: %s\n", coil.number,
+               coil.description.c_str());
+        SetSolenoidState(coil.number, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        SetSolenoidState(coil.number, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      }
+    }
+  }
+
+  printf("\nFlasher Test\n");
+  printf("=========\n");
+
+  for (const auto& lamp : GetLamps()) {
+    if (lamp.type == LED_TYPE_FLASHER) {
+      printf("\nNumber: %d\nDescription: %s\n", lamp.number,
+             lamp.description.c_str());
+      SetLampState(lamp.number, 1);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+      SetLampState(lamp.number, 0);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
+    for (const auto& coil : GetCoils()) {
+      if (coil.type == PWM_TYPE_FLASHER) {
+        printf("\nNumber: %d\nDescription: %s\n", coil.number,
+               coil.description.c_str());
+        for (uint8_t i = 0; i < 3; i++) {
+          SetSolenoidState(coil.number, 1);
+          std::this_thread::sleep_for(std::chrono::milliseconds(200));
+          SetSolenoidState(coil.number, 0);
+          std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        }
+      }
+    }
+  }
+
+  printf("\nGI Test\n");
+  printf("=========\n");
+
+  for (const auto& lamp : GetLamps()) {
+    if (lamp.type == LED_TYPE_GI) {
+      printf("\nNumber: %d\nDescription: %s\n", lamp.number,
+             lamp.description.c_str());
+      SetLampState(lamp.number, 1);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+      SetLampState(lamp.number, 0);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+  }
+}
+
+void PPUC::SwitchTest() {
+  printf("Switch Test\n");
+  printf("=========\n");
+
+  PPUCSwitchState* switchState;
+  while (true) {
+    if ((switchState = GetNextSwitchState()) != nullptr) {
+      auto it = std::find_if(m_switches.begin(), m_switches.end(),
+                             [switchState](const PPUCSwitch& vswitch) {
+                               return vswitch.number == switchState->number;
+                             });
+
+      if (it != m_switches.end()) {
+        printf("Switch updated: #%d, %d\nDescription: %s", switchState->number,
+               switchState->state, it->description.c_str());
+      } else {
+        printf("Switch updated: #%d, %d\n", switchState->number,
+               switchState->state);
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
 }

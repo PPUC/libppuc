@@ -37,6 +37,32 @@ struct PPUCSwitchState {
   }
 };
 
+struct PPUCSwitch {
+  u_int8_t number;
+  std::string description;
+
+  PPUCSwitch(u_int8_t n, const std::string& d)
+  : number(n), description(d) {}
+};
+
+struct PPUCCoil {
+  u_int8_t type;
+  u_int8_t number;
+  std::string description;
+
+  PPUCCoil(u_int8_t t, u_int8_t n,const std::string& d)
+  : type(t), number(n), description(d) {}
+};
+
+struct PPUCLamp {
+  u_int8_t type;
+  u_int8_t number;
+  std::string description;
+
+  PPUCLamp(u_int8_t t, u_int8_t n, const std::string& d)
+  : type(t), number(n), description(d) {}
+};
+
 class RS485Comm;
 
 class PPUCAPI PPUC {
@@ -63,10 +89,21 @@ class PPUCAPI PPUC {
   void SetLampState(int number, int state);
   PPUCSwitchState* GetNextSwitchState();
 
+  void CoilTest();
+  void LampTest();
+  void SwitchTest();
+
+  std::vector<PPUCCoil> GetCoils();
+  std::vector<PPUCLamp> GetLamps();
+  std::vector<PPUCSwitch> GetSwitches();
+
  private:
   YAML::Node m_ppucConfig;
   RS485Comm* m_pRS485Comm;
   uint8_t ResolveLedType(std::string type);
+  std::vector<PPUCCoil> m_coils;
+  std::vector<PPUCLamp> m_lamps;
+  std::vector<PPUCSwitch> m_switches;
 
   bool m_debug = false;
   char* m_rom;
