@@ -140,15 +140,16 @@ jobs:
       - name: Combine macos architectures
         run: |
           mkdir tmp
-          lipo -create -output tmp/libppuc-${{ needs.version.outputs.tag }}.dylib \
-              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libppuc.${{ needs.version.outputs.tag }}.dylib \
-              libppuc-${{ needs.version.outputs.tag }}-macos-x64/libppuc.${{ needs.version.outputs.tag }}.dylib
-          lipo -create -output tmp/libserialport.dylib \
-              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libserialport.dylib \
-              libppuc-${{ needs.version.outputs.tag }}-macos-x64/libserialport.dylib
-              lipo -create -output tmp/libyaml-cpp.0.8.0.dylib \
-              libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libyaml-cpp.0.8.0.dylib \
-              libppuc-${{ needs.version.outputs.tag }}-macos-x64/libyaml-cpp.0.8.0.dylib
+          find "libppuc-${{ needs.version.outputs.tag }}-macos-arm64" -name "*.dylib" | while read -r file; do
+            if [ -L "$file" ]; then
+              cp -a "$file" "tmp/"
+            elif [ -f "$file" ]; then
+              filename=$(basename "$file")
+              lipo -create -output "tmp/$filename" \
+                "libppuc-${{ needs.version.outputs.tag }}-macos-arm64/$filename" \
+                "libppuc-${{ needs.version.outputs.tag }}-macos-x64/$filename"
+            fi
+          done
       - name: Prepare artifacts
         run: |
           cd tmp
