@@ -8,9 +8,9 @@
 #include <mutex>
 #include <queue>
 
-#include "PPUC.h"
 #include "io-boards/Event.h"
 #include "libserialport.h"
+#include "PPUC_structs.h"
 
 #if _MSC_VER
 #define CALLBACK __stdcall
@@ -33,10 +33,6 @@
 #endif
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
-
-typedef void(CALLBACK* PPUC_LogMessageCallback)(const char* format,
-                                                va_list args,
-                                                const void* userData);
 
 class RS485Comm {
  public:

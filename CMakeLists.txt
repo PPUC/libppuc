@@ -52,6 +52,7 @@ set(PPUC_SOURCES
    src/RS485Comm.cpp
    src/PPUC.h
    src/PPUC.cpp
+   src/PPUC_structs.h
 )
 
 set(PPUC_INCLUDE_DIRS

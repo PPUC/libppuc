@@ -1,7 +1,7 @@
 #pragma once
 
 #define PPUC_VERSION_MAJOR 0  // X Digits
-#define PPUC_VERSION_MINOR 2  // Max 2 Digits
+#define PPUC_VERSION_MINOR 3  // Max 2 Digits
 #define PPUC_VERSION_PATCH 0  // Max 2 Digits
 
 #define _PPUC_STR(x) #x
@@ -15,53 +15,12 @@
 
 #ifdef _MSC_VER
 #define PPUCAPI __declspec(dllexport)
-#define CALLBACK __stdcall
 #else
 #define PPUCAPI __attribute__((visibility("default")))
-#define CALLBACK
 #endif
 
+#include "PPUC_structs.h"
 #include "yaml-cpp/yaml.h"
-
-typedef void(CALLBACK* PPUC_LogMessageCallback)(const char* format,
-                                                va_list args,
-                                                const void* userData);
-
-struct PPUCSwitchState {
-  int number;
-  int state;
-
-  PPUCSwitchState(int n, int s) {
-    number = n;
-    state = s;
-  }
-};
-
-struct PPUCSwitch {
-  uint8_t number;
-  std::string description;
-
-  PPUCSwitch(uint8_t n, const std::string& d)
-  : number(n), description(d) {}
-};
-
-struct PPUCCoil {
-  uint8_t type;
-  uint8_t number;
-  std::string description;
-
-  PPUCCoil(uint8_t t, uint8_t n,const std::string& d)
-  : type(t), number(n), description(d) {}
-};
-
-struct PPUCLamp {
-  uint8_t type;
-  uint8_t number;
-  std::string description;
-
-  PPUCLamp(uint8_t t, uint8_t n, const std::string& d)
-  : type(t), number(n), description(d) {}
-};
 
 class RS485Comm;
 
