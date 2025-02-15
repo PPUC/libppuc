@@ -130,7 +130,8 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
         new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
                         (uint8_t)CONFIG_TOPIC_COLOR, color));
 
-    m_lamps.push_back(PPUCLamp((uint8_t)type, n_item["number"].as<uint8_t>(),
+    m_lamps.push_back(PPUCLamp(board, port, (uint8_t)type,
+                               n_item["number"].as<uint8_t>(),
                                n_item["description"].as<std::string>()));
   }
 }
@@ -181,9 +182,10 @@ bool PPUC::Connect() {
             index++, (uint8_t)CONFIG_TOPIC_NUMBER,
             n_switch["number"].as<uint32_t>()));
 
-        m_switches.push_back(
-            PPUCSwitch(n_switch["number"].as<uint8_t>(),
-                       n_switch["description"].as<std::string>()));
+        m_switches.push_back(PPUCSwitch(
+            n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
+            n_switch["number"].as<uint8_t>(),
+            n_switch["description"].as<std::string>()));
       }
     }
 
@@ -294,7 +296,9 @@ bool PPUC::Connect() {
             index++, (uint8_t)CONFIG_TOPIC_TYPE, type));
 
         m_coils.push_back(
-            PPUCCoil((uint8_t)type, n_pwmOutput["number"].as<uint8_t>(),
+            PPUCCoil(n_pwmOutput["board"].as<uint8_t>(),
+                     n_pwmOutput["port"].as<uint8_t>(), (uint8_t)type,
+                     n_pwmOutput["number"].as<uint8_t>(),
                      n_pwmOutput["description"].as<std::string>()));
       }
     }
@@ -422,8 +426,8 @@ void PPUC::CoilTest() {
 
   for (const auto& coil : GetCoils()) {
     if (coil.type == PWM_TYPE_SOLENOID) {
-      printf("\nNumber: %d\nDescription: %s\n", coil.number,
-             coil.description.c_str());
+      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", coil.board,
+             coil.port, coil.number, coil.description.c_str());
       SetSolenoidState(coil.number, 1);
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       SetSolenoidState(coil.number, 0);
@@ -438,8 +442,8 @@ void PPUC::LampTest() {
 
   for (const auto& lamp : GetLamps()) {
     if (lamp.type == LED_TYPE_LAMP) {
-      printf("\nNumber: %d\nDescription: %s\n", lamp.number,
-             lamp.description.c_str());
+      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", lamp.board,
+             lamp.port, lamp.number, lamp.description.c_str());
       SetLampState(lamp.number, 1);
       std::this_thread::sleep_for(std::chrono::milliseconds(2000));
       SetLampState(lamp.number, 0);
@@ -448,8 +452,8 @@ void PPUC::LampTest() {
 
     for (const auto& coil : GetCoils()) {
       if (coil.type == PWM_TYPE_LAMP) {
-        printf("\nNumber: %d\nDescription: %s\n", coil.number,
-               coil.description.c_str());
+        printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
+               coil.board, coil.port, coil.number, coil.description.c_str());
         SetSolenoidState(coil.number, 1);
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         SetSolenoidState(coil.number, 0);
@@ -463,8 +467,8 @@ void PPUC::LampTest() {
 
   for (const auto& lamp : GetLamps()) {
     if (lamp.type == LED_TYPE_FLASHER) {
-      printf("\nNumber: %d\nDescription: %s\n", lamp.number,
-             lamp.description.c_str());
+      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", lamp.board,
+             lamp.port, lamp.number, lamp.description.c_str());
       SetLampState(lamp.number, 1);
       std::this_thread::sleep_for(std::chrono::milliseconds(2000));
       SetLampState(lamp.number, 0);
@@ -473,8 +477,8 @@ void PPUC::LampTest() {
 
     for (const auto& coil : GetCoils()) {
       if (coil.type == PWM_TYPE_FLASHER) {
-        printf("\nNumber: %d\nDescription: %s\n", coil.number,
-               coil.description.c_str());
+        printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
+               coil.board, coil.port, coil.number, coil.description.c_str());
         for (uint8_t i = 0; i < 3; i++) {
           SetSolenoidState(coil.number, 1);
           std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -490,8 +494,8 @@ void PPUC::LampTest() {
 
   for (const auto& lamp : GetLamps()) {
     if (lamp.type == LED_TYPE_GI) {
-      printf("\nNumber: %d\nDescription: %s\n", lamp.number,
-             lamp.description.c_str());
+      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", lamp.board,
+             lamp.port, lamp.number, lamp.description.c_str());
       SetLampState(lamp.number, 1);
       std::this_thread::sleep_for(std::chrono::milliseconds(2000));
       SetLampState(lamp.number, 0);
