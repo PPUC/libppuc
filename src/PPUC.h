@@ -48,6 +48,9 @@ class PPUCAPI PPUC {
   void SetLampState(int number, int state);
   PPUCSwitchState* GetNextSwitchState();
 
+  uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
+  uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
+
   void CoilTest();
   void LampTest();
   void SwitchTest();
@@ -68,7 +71,11 @@ class PPUCAPI PPUC {
   char* m_rom;
   char* m_serial;
   uint8_t m_platform;
+  uint8_t m_coinDoorClosedSwitch;
+  uint8_t m_gameOnSolenoid;
 
+  void SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
+                              uint8_t board, uint32_t port);
   void SendLedConfigBlock(const YAML::Node& items, uint32_t type, uint8_t board,
                           uint32_t port);
 };
