@@ -115,7 +115,7 @@ void PPUC::SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
       if (strcmp(c_source.c_str(), "S") == 0) {
         source = EVENT_SOURCE_SOLENOID;
       } else if (strcmp(c_source.c_str(), "L") == 0) {
-        type = EVENT_SOURCE_LIGHT;
+        source = EVENT_SOURCE_LIGHT;
       }
       m_pRS485Comm->SendConfigEvent(
           new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER, index++,
@@ -125,7 +125,7 @@ void PPUC::SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
           (uint8_t)CONFIG_TOPIC_NUMBER, n_item["number"].as<uint32_t>()));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
-          (uint8_t)CONFIG_TOPIC_VALUE, n_item["ledNumber"].as<uint32_t>()));
+          (uint8_t)CONFIG_TOPIC_VALUE, n_item["value"].as<uint32_t>()));
     }
   }
 }
