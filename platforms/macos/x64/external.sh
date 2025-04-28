@@ -54,7 +54,8 @@ unzip yaml-cpp.zip
 
 cd yaml-cpp-${YAML_CPP_SHA}
 cp -r include/yaml-cpp ../../third-party/include/
-cmake -DYAML_BUILD_SHARED_LIBS=ON \
+cmake -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+  -DYAML_BUILD_SHARED_LIBS=ON \
   -DYAML_CPP_BUILD_CONTRIB=OFF \
   -DYAML_CPP_BUILD_TOOLS=OFF \
   -DYAML_CPP_FORMAT_SOURCE=OFF \
