@@ -61,6 +61,5 @@ cmake -DYAML_BUILD_SHARED_LIBS=ON \
   -DYAML_CPP_INSTALL=OFF \
   -B build
 cmake --build build --config Release
-cp build/libyaml-cpp.a ../../third-party/build-libs/linux/x64/
 cp -P build/libyaml-cpp.so.* ../../third-party/runtime-libs/linux/x64/
 cd ..
