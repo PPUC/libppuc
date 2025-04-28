@@ -35,7 +35,10 @@ curl -sL https://github.com/sigrokproject/libserialport/archive/${LIBSERIALPORT_
 unzip libserialport.zip
 cd libserialport-$LIBSERIALPORT_SHA
 cp libserialport.h ../../third-party/include
-msbuild.exe libserialport.sln -p:Configuration=Release -p:Platform=x86
+msbuild.exe libserialport.sln \
+   -p:Platform=x86 \
+   -p:PlatformToolset=v143 \
+   -p:Configuration=Release
 cp Release/libserialport.lib ../../third-party/build-libs/win/x86
 cp Release/libserialport.dll ../../third-party/runtime-libs/win/x86
 cd ..
