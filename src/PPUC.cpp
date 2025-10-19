@@ -428,13 +428,13 @@ bool PPUC::Connect() {
         m_pRS485Comm->SendConfigEvent(
             new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
-                            (uint8_t)CONFIG_TOPIC_LIGHT_UP,
-                            n_ledStripe["lightUp"].as<uint32_t>()));
+                            (uint8_t)CONFIG_TOPIC_AFTER_GLOW,
+                            n_ledStripe["afterGlow"].as<uint32_t>()));
         m_pRS485Comm->SendConfigEvent(
             new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                             (uint8_t)CONFIG_TOPIC_LED_STRING, index++,
-                            (uint8_t)CONFIG_TOPIC_AFTER_GLOW,
-                            n_ledStripe["afterGlow"].as<uint32_t>()));
+                            (uint8_t)CONFIG_TOPIC_LIGHT_UP,
+                            n_ledStripe["lightUp"].as<uint32_t>()));
 
         const YAML::Node& segments = n_ledStripe["segments"];
         if (segments) {
