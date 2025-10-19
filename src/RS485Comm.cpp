@@ -325,10 +325,10 @@ Event* RS485Comm::receiveEvent() {
     }
     if (m_debug) {
       // @todo use logger
-      printf("Timeout\n");
+      printf("Timeout when waiting for events from i/o boards\n");
     }
   }
-  if (m_debug) {
+  else if (m_debug) {
     // @todo use logger
     printf("RS485 Error\n");
   }
