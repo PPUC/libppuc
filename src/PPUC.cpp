@@ -474,11 +474,14 @@ bool PPUC::Connect() {
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
                                 (uint8_t)CONFIG_TOPIC_LED_SEGMENT,
                                 n_led_effect["segment"].as<uint32_t>()));
+            uint32_t color;
+            std::stringstream ss;
+            ss << std::hex << n_led_effect["color"].as<std::string>();
+            ss >> color;
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
-                                (uint8_t)CONFIG_TOPIC_COLOR,
-                                n_led_effect["color"].as<uint32_t>()));
+                                (uint8_t)CONFIG_TOPIC_COLOR, color));
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
