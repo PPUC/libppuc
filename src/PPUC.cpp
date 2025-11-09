@@ -163,9 +163,9 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
           new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
                           (uint8_t)CONFIG_TOPIC_COLOR, color));
 
-      m_lamps.push_back(PPUCLamp(board, port, (uint8_t)type,
-                                 n_item["number"].as<uint8_t>(),
-                                 n_item["description"].as<std::string>()));
+      m_lamps.push_back(
+          PPUCLamp(board, port, (uint8_t)type, n_item["number"].as<uint8_t>(),
+                   n_item["description"].as<std::string>(), color));
     }
   }
 }
@@ -631,8 +631,11 @@ void PPUC::LampTest() {
 
   for (const auto& lamp : GetLamps()) {
     if (lamp.type == LED_TYPE_LAMP) {
-      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", lamp.board,
-             lamp.port, lamp.number, lamp.description.c_str());
+      printf(
+          "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08" PRIx32
+          "\n",
+          lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
+          lamp.color);
       SetLampState(lamp.number, 1);
       std::this_thread::sleep_for(std::chrono::milliseconds(2000));
       SetLampState(lamp.number, 0);
@@ -641,8 +644,11 @@ void PPUC::LampTest() {
 
     for (const auto& coil : GetCoils()) {
       if (coil.type == PWM_TYPE_LAMP) {
-        printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
-               coil.board, coil.port, coil.number, coil.description.c_str());
+        printf(
+            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: "
+            "%08" PRIx32 "\n",
+            lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
+            lamp.color);
         SetSolenoidState(coil.number, 1);
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         SetSolenoidState(coil.number, 0);

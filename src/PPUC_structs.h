@@ -50,7 +50,8 @@ struct PPUCLamp {
   uint8_t type;
   uint8_t number;
   std::string description;
+  uint32_t color;
 
-  PPUCLamp(uint8_t b, uint8_t p, uint8_t t, uint8_t n, const std::string& d)
-  : board(b), port(p), type(t), number(n), description(d) {}
+  PPUCLamp(uint8_t b, uint8_t p, uint8_t t, uint8_t n, const std::string& d, uint32_t
+  : board(b), port(p), type(t), number(n), description(d), color(c) {}
 };
