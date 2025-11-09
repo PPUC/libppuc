@@ -684,15 +684,16 @@ void PPUC::LampTest() {
   printf("\nGI Test\n");
   printf("=========\n");
 
-  for (const auto& lamp : GetLamps()) {
-    if (lamp.type == LED_TYPE_GI) {
-      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", lamp.board,
-             lamp.port, lamp.number, lamp.description.c_str());
-      SetLampState(lamp.number, 1);
-      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-      SetLampState(lamp.number, 0);
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+  for (uint8_t i = 1; i <= 8; i++) {
+    if (PLATFORM_WPC != m_platform && i > 1) {
+      break;
     }
+    printf("Setting GI String %d to brightness to %d\n", i, 8);
+    m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_GI, /* string */ i,
+                                       /* full brightness */ 8));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_GI, /* string */ i, 0));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 }
 
