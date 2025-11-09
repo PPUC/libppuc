@@ -631,11 +631,9 @@ void PPUC::LampTest() {
 
   for (const auto& lamp : GetLamps()) {
     if (lamp.type == LED_TYPE_LAMP) {
-      printf(
-          "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08" PRIx32
-          "\n",
-          lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
-          lamp.color);
+      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08X\n",
+             lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
+             lamp.color);
       SetLampState(lamp.number, 1);
       std::this_thread::sleep_for(std::chrono::milliseconds(2000));
       SetLampState(lamp.number, 0);
@@ -645,8 +643,7 @@ void PPUC::LampTest() {
     for (const auto& coil : GetCoils()) {
       if (coil.type == PWM_TYPE_LAMP) {
         printf(
-            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: "
-            "%08" PRIx32 "\n",
+            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08X\n",
             lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
             lamp.color);
         SetSolenoidState(coil.number, 1);
