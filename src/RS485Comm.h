@@ -2,15 +2,16 @@
 
 #include <inttypes.h>
 #include <stdarg.h>
-#include <cstring>
+
 #include <cstdio>
-#include <thread>
+#include <cstring>
 #include <mutex>
 #include <queue>
+#include <thread>
 
+#include "PPUC_structs.h"
 #include "io-boards/Event.h"
 #include "libserialport.h"
-#include "PPUC_structs.h"
 
 #if _MSC_VER
 #define CALLBACK __stdcall
@@ -19,8 +20,8 @@
 #endif
 
 #define RS485_COMM_BAUD_RATE 115200
-#define RS485_COMM_SERIAL_READ_TIMEOUT 8
-#define RS485_COMM_SERIAL_WRITE_TIMEOUT 8
+#define RS485_COMM_SERIAL_READ_TIMEOUT 2
+#define RS485_COMM_SERIAL_WRITE_TIMEOUT 4
 
 #define RS485_COMM_MAX_BOARDS 16
 
@@ -33,6 +34,7 @@
 #endif
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
+#define RS485_COMM_MAX_EVENTS_TO_SEND 32
 
 class RS485Comm {
  public:

@@ -42,15 +42,19 @@ void RS485Comm::Run() {
     int switchBoardCount = 0;
     while (m_pSerialPort != NULL) {
       m_eventQueueMutex.lock();
-
-      if (!m_events.empty()) {
-        Event* event = m_events.front();
-        m_events.pop();
-        m_eventQueueMutex.unlock();
-
-        SendEvent(event);
-      } else {
-        m_eventQueueMutex.unlock();
+      uint8_t eventsSent = m_events.empty() ? RS485_COMM_MAX_EVENTS_TO_SEND : 0;
+      m_eventQueueMutex.unlock();
+      while (eventsSent++ < RS485_COMM_MAX_EVENTS_TO_SEND) {
+        m_eventQueueMutex.lock();
+        if (!m_events.empty()) {
+          Event* event = m_events.front();
+          m_events.pop();
+          m_eventQueueMutex.unlock();
+          SendEvent(event);
+        } else {
+          m_eventQueueMutex.unlock();
+          break;
+        }
       }
 
       if (m_activeBoards[m_switchBoards[switchBoardCount]]) {
@@ -61,7 +65,7 @@ void RS485Comm::Run() {
         switchBoardCount = 0;
       }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      // std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     LogMessage("RS485Comm run thread finished");
@@ -250,7 +254,7 @@ Event* RS485Comm::receiveEvent() {
                 std::chrono::steady_clock::now() - start))
                .count() < 8000) {
       // printf("Available %d\n", m_serialPort.Available());
-      if ((int) sp_input_waiting(m_pSerialPort) >= 6) {
+      if ((int)sp_input_waiting(m_pSerialPort) >= 6) {
         uint8_t startByte;
         sp_blocking_read(m_pSerialPort, &startByte, 1,
                          RS485_COMM_SERIAL_READ_TIMEOUT);
@@ -327,8 +331,7 @@ Event* RS485Comm::receiveEvent() {
       // @todo use logger
       printf("Timeout when waiting for events from i/o boards\n");
     }
-  }
-  else if (m_debug) {
+  } else if (m_debug) {
     // @todo use logger
     printf("RS485 Error\n");
   }
@@ -345,7 +348,8 @@ void RS485Comm::PollEvents(int board) {
   Event* event = new Event(EVENT_POLL_EVENTS, 1, board);
   if (SendEvent(event)) {
     // Wait until the i/o board switched to RS485 send mode.
-    std::this_thread::sleep_for(std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
+    std::this_thread::sleep_for(
+        std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
 
     bool null_event = false;
     Event* event_recv;
@@ -381,6 +385,7 @@ void RS485Comm::PollEvents(int board) {
     }
 
     // Wait until the i/o board switched back to RS485 receive mode.
-    std::this_thread::sleep_for(std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
+    std::this_thread::sleep_for(
+        std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
   }
 }
