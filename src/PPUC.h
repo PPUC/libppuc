@@ -51,8 +51,10 @@ class PPUCAPI PPUC {
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
 
-  void CoilTest();
-  void LampTest();
+  void CoilTest(uint8_t number);
+  void LampTest(uint8_t number);
+  void FlasherTest(uint8_t number);
+  void GITest(uint8_t number);
   void SwitchTest();
 
   std::vector<PPUCCoil> GetCoils();

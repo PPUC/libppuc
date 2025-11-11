@@ -609,12 +609,15 @@ std::vector<PPUCSwitch> PPUC::GetSwitches() {
   return m_switches;
 }
 
-void PPUC::CoilTest() {
+void PPUC::CoilTest(u_int8_t number) {
   printf("Coil Test\n");
   printf("=========\n");
 
   for (const auto& coil : GetCoils()) {
-    if (coil.type == PWM_TYPE_SOLENOID) {
+    if (coil.type == PWM_TYPE_SOLENOID || coil.type == PWM_TYPE_FLASHER) {
+      if (number != 0 && coil.number != number) {
+        continue;
+      }
       printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", coil.board,
              coil.port, coil.number, coil.description.c_str());
       SetSolenoidState(coil.number, 1);
@@ -625,62 +628,107 @@ void PPUC::CoilTest() {
   }
 }
 
-void PPUC::LampTest() {
+void PPUC::LampTest(u_int8_t number) {
   printf("Lamp Test\n");
   printf("=========\n");
 
-  for (const auto& lamp : GetLamps()) {
-    if (lamp.type == LED_TYPE_LAMP) {
-      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08X\n",
-             lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
-             lamp.color);
-      SetLampState(lamp.number, 1);
-      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-      SetLampState(lamp.number, 0);
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+  if (number != 0) {
+    for (const auto& lamp : GetLamps()) {
+      if (lamp.type == LED_TYPE_LAMP && lamp.number == number) {
+        printf(
+            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: "
+            "%08X\n",
+            lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
+            lamp.color);
+        SetLampState(lamp.number, 1);
+      }
     }
 
     for (const auto& coil : GetCoils()) {
-      if (coil.type == PWM_TYPE_LAMP) {
+      if (coil.type == PWM_TYPE_LAMP && coil.number == number) {
+        printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
+               coil.board, coil.port, coil.number, coil.description.c_str());
+        SetSolenoidState(coil.number, 1);
+      }
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+
+    for (const auto& lamp : GetLamps()) {
+      SetLampState(lamp.number, 0);
+    }
+
+    for (const auto& coil : GetCoils()) {
+      SetSolenoidState(coil.number, 0);
+    }
+  } else {
+    for (const auto& lamp : GetLamps()) {
+      if (lamp.type == LED_TYPE_LAMP) {
         printf(
             "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08X\n",
             lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
             lamp.color);
-        SetSolenoidState(coil.number, 1);
+        SetLampState(lamp.number, 1);
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-        SetSolenoidState(coil.number, 0);
+        SetLampState(lamp.number, 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       }
-    }
-  }
 
-  printf("\nFlasher Test\n");
-  printf("=========\n");
-
-  for (const auto& lamp : GetLamps()) {
-    if (lamp.type == LED_TYPE_FLASHER) {
-      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", lamp.board,
-             lamp.port, lamp.number, lamp.description.c_str());
-      SetLampState(lamp.number, 1);
-      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-      SetLampState(lamp.number, 0);
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    }
-
-    for (const auto& coil : GetCoils()) {
-      if (coil.type == PWM_TYPE_FLASHER) {
-        printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
-               coil.board, coil.port, coil.number, coil.description.c_str());
-        for (uint8_t i = 0; i < 3; i++) {
+      for (const auto& coil : GetCoils()) {
+        if (coil.type == PWM_TYPE_LAMP) {
+          printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
+                 coil.board, coil.port, coil.number, coil.description.c_str());
           SetSolenoidState(coil.number, 1);
-          std::this_thread::sleep_for(std::chrono::milliseconds(200));
+          std::this_thread::sleep_for(std::chrono::milliseconds(2000));
           SetSolenoidState(coil.number, 0);
           std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
       }
     }
   }
+}
 
+void PPUC::FlasherTest(u_int8_t number) {
+  printf("\nFlasher Test\n");
+  printf("=========\n");
+
+  for (const auto& lamp : GetLamps()) {
+    if (lamp.type == LED_TYPE_FLASHER) {
+      if (number != 0 && lamp.number != number) {
+        continue;
+      }
+      printf(
+          "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: "
+          "%08X\n",
+          lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
+          lamp.color);
+      for (uint8_t i = 0; i < 3; i++) {
+        SetSolenoidState(lamp.number, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        SetSolenoidState(lamp.number, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      }
+    }
+  }
+
+  for (const auto& coil : GetCoils()) {
+    if (coil.type == PWM_TYPE_FLASHER) {
+      if (number != 0 && coil.number != number) {
+        continue;
+      }
+      printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n", coil.board,
+             coil.port, coil.number, coil.description.c_str());
+      for (uint8_t i = 0; i < 3; i++) {
+        SetSolenoidState(coil.number, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        SetSolenoidState(coil.number, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      }
+    }
+  }
+}
+
+void PPUC::GITest(u_int8_t number) {
   printf("\nGI Test\n");
   printf("=========\n");
 
@@ -688,6 +736,11 @@ void PPUC::LampTest() {
     if (PLATFORM_WPC != m_platform && i > 1) {
       break;
     }
+
+    if (number != 0 && number != i) {
+      continue;
+    }
+
     printf("Setting GI String %d to brightness to %d\n", i, 8);
     m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_GI, /* string */ i,
                                        /* full brightness */ 8));
