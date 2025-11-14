@@ -2,9 +2,7 @@
 
 set -e
 
-IO_BOARDS_SHA=9d1fda9a8158b7c77d068188b9796ea1d29eeb88
-LIBSERIALPORT_SHA=21b3dfe5f68c205be4086469335fd2fc2ce11ed2
-YAML_CPP_SHA=28f93bdec6387d42332220afa9558060c8016795
+source ./platforms/config.sh
 
 NUM_PROCS=$(sysctl -n hw.ncpu)
 
@@ -26,6 +24,7 @@ cd external
 curl -sL https://github.com/PPUC/io-boards/archive/${IO_BOARDS_SHA}.zip -o io-boards.zip
 unzip io-boards.zip
 cd io-boards-${IO_BOARDS_SHA}
+cp src/PPUCTimings.h ../../third-party/include/io-boards/
 cp src/PPUCPlatforms.h ../../third-party/include/io-boards/
 cp src/EventDispatcher/Event.h ../../third-party/include/io-boards/
 cd ..

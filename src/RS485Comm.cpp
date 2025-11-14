@@ -1,5 +1,7 @@
 #include "RS485Comm.h"
 
+#include "io-boards/PPUCTimimgs.h"
+
 RS485Comm::RS485Comm() {
   m_pThread = NULL;
   m_pSerialPort = NULL;
@@ -127,7 +129,11 @@ bool RS485Comm::Connect(const char* pDevice) {
   // to reset all devices.
   SendEvent(new Event(EVENT_RESET));
   // Wait before continuing.
-  std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+  // The EffectControllers get a grace period atfer the reset event to turn off
+  // all effect devices before the reset happens After the reset, each IO boards
+  // waits a bit for a USB debugger connection before turning on.
+  std::this_thread::sleep_for(
+      std::chrono::milliseconds(WAIT_FOR_IO_BOARD_RESET));
 
   for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++) {
     // Let the boards synchronize themselves again to the RS485 bus.
@@ -140,7 +146,7 @@ bool RS485Comm::Connect(const char* pDevice) {
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
   SendEvent(new Event(EVENT_PING));
   // Wait before continuing.
-  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
   for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++) {
     if (m_debug) {
