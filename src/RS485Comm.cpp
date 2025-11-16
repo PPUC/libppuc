@@ -1,6 +1,6 @@
 #include "RS485Comm.h"
 
-#include "io-boards/PPUCTimimgs.h"
+#include "io-boards/PPUCTimings.h"
 
 RS485Comm::RS485Comm() {
   m_pThread = NULL;
