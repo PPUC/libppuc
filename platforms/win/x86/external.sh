@@ -4,8 +4,6 @@ set -e
 
 source ./platforms/config.sh
 
-NUM_PROCS=$(sysctl -n hw.ncpu)
-
 echo "Building libraries..."
 echo "  IO_BOARDS_SHA: ${IO_BOARDS_SHA}"
 echo "  LIBSERIALPORT_SHA: ${LIBSERIALPORT_SHA}"

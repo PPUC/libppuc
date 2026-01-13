@@ -237,7 +237,7 @@ bool RS485Comm::SendEvent(Event* event) {
     if (sp_blocking_write(m_pSerialPort, m_msg, 7,
                           RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
       if (m_debug) {
-        // @todo user logger
+        // @todo use logger
         printf("Sent Event %d %d %d\n", event->sourceId, event->eventId,
                event->value);
       }

@@ -199,6 +199,51 @@ bool PPUC::Connect() {
       }
     }
 
+    // Send switch matrix configuration to I/O boards
+    // IMPORTANT: This must be done before sending individual switch configs
+    // because the existence of a switch matrix changes the amount of dedicated
+    // switches available.
+    const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
+    if (switchMatrix) {
+      index = 0;
+      m_pRS485Comm->SendConfigEvent(
+          new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
+                          (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
+                          (uint8_t)CONFIG_TOPIC_ACTIVE_LOW,
+                          switchMatrix["activeLow"].as<bool>()));
+      m_pRS485Comm->SendConfigEvent(
+          new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
+                          (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
+                          (uint8_t)CONFIG_TOPIC_NUM_ROWS,
+                          switchMatrix["numRows"].as<uint8_t>()));
+
+      const YAML::Node& switches = switchMatrix["switches"];
+      if (switches) {
+        for (YAML::Node n_switch : switches) {
+          if (m_debug) {
+            // @todo user logger
+            printf("Description: %s\n",
+                   n_switch["description"].as<std::string>().c_str());
+          }
+
+          index = 0;
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_switch["board"].as<uint8_t>(),
+              (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
+              (uint8_t)CONFIG_TOPIC_PORT, n_switch["port"].as<uint32_t>()));
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_switch["board"].as<uint8_t>(),
+              (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
+              (uint8_t)CONFIG_TOPIC_NUMBER, n_switch["number"].as<uint32_t>()));
+
+          m_switches.push_back(PPUCSwitch(
+              n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
+              n_switch["number"].as<uint8_t>(),
+              n_switch["description"].as<std::string>()));
+        }
+      }
+    }
+
     // Send switch configuration to I/O boards
     const YAML::Node& switches = m_ppucConfig["switches"];
     if (switches) {
@@ -218,63 +263,15 @@ bool PPUC::Connect() {
             n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
             index++, (uint8_t)CONFIG_TOPIC_NUMBER,
             n_switch["number"].as<uint32_t>()));
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
+            index++, (uint8_t)CONFIG_TOPIC_DEBOUNCE_TIME,
+            n_switch["debounce"].as<uint32_t>()));
 
         m_switches.push_back(PPUCSwitch(
             n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
             n_switch["number"].as<uint8_t>(),
             n_switch["description"].as<std::string>()));
-      }
-    }
-
-    // Send switch matrix configuration to I/O boards
-    const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
-    if (switchMatrix) {
-      index = 0;
-      m_pRS485Comm->SendConfigEvent(
-          new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                          (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                          (uint8_t)CONFIG_TOPIC_ACTIVE_LOW,
-                          switchMatrix["activeLow"].as<bool>()));
-      m_pRS485Comm->SendConfigEvent(
-          new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                          (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                          (uint8_t)CONFIG_TOPIC_MAX_PULSE_TIME,
-                          switchMatrix["pulseTime"].as<uint32_t>()));
-      const YAML::Node& switcheMatrixColumns =
-          m_ppucConfig["switchMatrix"]["columns"];
-      for (YAML::Node n_switchMatrixColumn : switcheMatrixColumns) {
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                            (uint8_t)CONFIG_TOPIC_TYPE, MATRIX_TYPE_COLUMN));
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                            (uint8_t)CONFIG_TOPIC_NUMBER,
-                            n_switchMatrixColumn["number"].as<uint32_t>()));
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                            (uint8_t)CONFIG_TOPIC_PORT,
-                            n_switchMatrixColumn["port"].as<uint32_t>()));
-      }
-      const YAML::Node& switcheMatrixRows =
-          m_ppucConfig["switchMatrix"]["rows"];
-      for (YAML::Node n_switchMatrixRow : switcheMatrixRows) {
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                            (uint8_t)CONFIG_TOPIC_TYPE, MATRIX_TYPE_ROW));
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                            (uint8_t)CONFIG_TOPIC_NUMBER,
-                            n_switchMatrixRow["number"].as<uint32_t>()));
-        m_pRS485Comm->SendConfigEvent(
-            new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
-                            (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-                            (uint8_t)CONFIG_TOPIC_PORT,
-                            n_switchMatrixRow["port"].as<uint32_t>()));
       }
     }
 
@@ -609,7 +606,7 @@ std::vector<PPUCSwitch> PPUC::GetSwitches() {
   return m_switches;
 }
 
-void PPUC::CoilTest(u_int8_t number) {
+void PPUC::CoilTest(uint8_t number) {
   printf("Coil Test\n");
   printf("=========\n");
 
@@ -628,7 +625,7 @@ void PPUC::CoilTest(u_int8_t number) {
   }
 }
 
-void PPUC::LampTest(u_int8_t number) {
+void PPUC::LampTest(uint8_t number) {
   printf("Lamp Test\n");
   printf("=========\n");
 
@@ -636,7 +633,7 @@ void PPUC::LampTest(u_int8_t number) {
     for (const auto& lamp : GetLamps()) {
       if (lamp.type == LED_TYPE_LAMP && lamp.number == number) {
         printf(
-            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: "
+            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\nColor: "
             "%08X\n",
             lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
             lamp.color);
@@ -665,7 +662,7 @@ void PPUC::LampTest(u_int8_t number) {
     for (const auto& lamp : GetLamps()) {
       if (lamp.type == LED_TYPE_LAMP) {
         printf(
-            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: %08X\n",
+            "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\nColor: %08X\n",
             lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
             lamp.color);
         SetLampState(lamp.number, 1);
@@ -688,7 +685,7 @@ void PPUC::LampTest(u_int8_t number) {
   }
 }
 
-void PPUC::FlasherTest(u_int8_t number) {
+void PPUC::FlasherTest(uint8_t number) {
   printf("\nFlasher Test\n");
   printf("=========\n");
 
@@ -698,7 +695,7 @@ void PPUC::FlasherTest(u_int8_t number) {
         continue;
       }
       printf(
-          "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\Color: "
+          "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\nColor: "
           "%08X\n",
           lamp.board, lamp.port, lamp.number, lamp.description.c_str(),
           lamp.color);
@@ -728,7 +725,7 @@ void PPUC::FlasherTest(u_int8_t number) {
   }
 }
 
-void PPUC::GITest(u_int8_t number) {
+void PPUC::GITest(uint8_t number) {
   printf("\nGI Test\n");
   printf("=========\n");
 
