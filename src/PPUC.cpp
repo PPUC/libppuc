@@ -1,9 +1,12 @@
 #include "PPUC.h"
 
+#include <algorithm>
 #include <cstring>
+#include <set>
 
 #include "Adafruit_NeoPixel.h"
 #include "RS485Comm.h"
+#include "io-boards/PPUCProtocolV2.h"
 #include "io-boards/Event.h"
 #include "io-boards/PPUCPlatforms.h"
 
@@ -535,6 +538,43 @@ bool PPUC::Connect() {
                            n_ledStripe["port"].as<uint32_t>());
       }
     }
+
+    // Derive dense runtime mappings from configured states.
+    std::set<uint16_t> coilNumbers;
+    for (const auto& coil : m_coils) {
+      coilNumbers.insert(coil.number);
+    }
+    std::set<uint16_t> lampNumbers;
+    for (const auto& lamp : m_lamps) {
+      lampNumbers.insert(lamp.number);
+    }
+    std::set<uint16_t> switchNumbers;
+    for (const auto& sw : m_switches) {
+      switchNumbers.insert(sw.number);
+    }
+
+    std::vector<uint16_t> coilMapping(coilNumbers.begin(), coilNumbers.end());
+    std::vector<uint16_t> lampMapping(lampNumbers.begin(), lampNumbers.end());
+    std::vector<uint16_t> switchMapping(switchNumbers.begin(), switchNumbers.end());
+
+    ppuc::v2::RuntimeConfig runtimeConfig;
+    runtimeConfig.coilBits = std::max<uint16_t>(
+        1, static_cast<uint16_t>(coilMapping.size()));
+    runtimeConfig.lampBits = std::max<uint16_t>(
+        1, static_cast<uint16_t>(lampMapping.size()));
+    runtimeConfig.switchBits = std::max<uint16_t>(
+        1, static_cast<uint16_t>(switchMapping.size()));
+    runtimeConfig.coilBits = std::min<uint16_t>(runtimeConfig.coilBits, ppuc::v2::kMaxCoilBits);
+    runtimeConfig.lampBits = std::min<uint16_t>(runtimeConfig.lampBits, ppuc::v2::kMaxLampBits);
+    runtimeConfig.switchBits = std::min<uint16_t>(runtimeConfig.switchBits, ppuc::v2::kMaxSwitchBits);
+    coilMapping.resize(runtimeConfig.coilBits);
+    lampMapping.resize(runtimeConfig.lampBits);
+    switchMapping.resize(runtimeConfig.switchBits);
+    m_pRS485Comm->SetMappings(coilMapping, lampMapping, switchMapping);
+    m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
+    m_pRS485Comm->SendSetupFrame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    m_pRS485Comm->SendMappingFrames();
 
     // Wait before continuing.
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));

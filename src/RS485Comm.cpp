@@ -6,6 +6,7 @@ RS485Comm::RS485Comm() {
   m_pThread = NULL;
   m_pSerialPort = NULL;
   m_pSerialPortConfig = NULL;
+  m_runtimeConfig = ppuc::v2::RuntimeConfig();
 }
 
 RS485Comm::~RS485Comm() {
@@ -41,33 +42,39 @@ void RS485Comm::Run() {
   m_pThread = new std::thread([this]() {
     LogMessage("RS485Comm run thread starting");
 
-    int switchBoardCount = 0;
     while (m_pSerialPort != NULL) {
-      m_eventQueueMutex.lock();
-      uint8_t eventsSent = m_events.empty() ? RS485_COMM_MAX_EVENTS_TO_SEND : 0;
-      m_eventQueueMutex.unlock();
+      uint8_t eventsSent = 0;
       while (eventsSent++ < RS485_COMM_MAX_EVENTS_TO_SEND) {
+        Event* event = nullptr;
         m_eventQueueMutex.lock();
         if (!m_events.empty()) {
-          Event* event = m_events.front();
+          event = m_events.front();
           m_events.pop();
-          m_eventQueueMutex.unlock();
-          SendEvent(event);
-        } else {
-          m_eventQueueMutex.unlock();
+        }
+        m_eventQueueMutex.unlock();
+        if (!event) {
           break;
         }
+        SendEvent(event);
+        delete event;
       }
 
-      if (m_activeBoards[m_switchBoards[switchBoardCount]]) {
-        PollEvents(m_switchBoards[switchBoardCount]);
+      if (!m_runtimeEnabled) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
       }
 
-      if (++switchBoardCount > m_switchBoardCounter) {
-        switchBoardCount = 0;
+      uint8_t nextBoard = ppuc::v2::kNoBoard;
+      if (m_switchBoardCounter > 0) {
+        nextBoard = m_switchBoards[m_switchBoardIndex];
+        m_switchBoardIndex =
+            (uint8_t)((m_switchBoardIndex + 1) % m_switchBoardCounter);
       }
 
-      // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      SendOutputStateFrame(nextBoard);
+      if (nextBoard != ppuc::v2::kNoBoard) {
+        ReceiveSwitchStateFrame(nextBoard);
+      }
     }
 
     LogMessage("RS485Comm run thread finished");
@@ -75,9 +82,39 @@ void RS485Comm::Run() {
 }
 
 void RS485Comm::QueueEvent(Event* event) {
-  m_eventQueueMutex.lock();
+  if (!event) {
+    return;
+  }
+
+  switch (event->sourceId) {
+    case EVENT_SOURCE_SOLENOID: {
+      auto it = m_coilNumberToIndex.find(event->eventId);
+      if (it != m_coilNumberToIndex.end() && it->second < ppuc::v2::kMaxCoilBits) {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        ppuc::v2::SetBitmapBit(m_coilBitmap, it->second, event->value != 0);
+      }
+      delete event;
+      return;
+    }
+
+    case EVENT_SOURCE_LIGHT:
+    case EVENT_SOURCE_GI: {
+      auto it = m_lampNumberToIndex.find(event->eventId);
+      if (it != m_lampNumberToIndex.end() && it->second < ppuc::v2::kMaxLampBits) {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        ppuc::v2::SetBitmapBit(m_lampBitmap, it->second, event->value != 0);
+      }
+      delete event;
+      return;
+    }
+
+    case EVENT_RUN:
+      m_runtimeEnabled = event->value != 0;
+      break;
+  }
+
+  std::lock_guard<std::mutex> lock(m_eventQueueMutex);
   m_events.push(event);
-  m_eventQueueMutex.unlock();
 }
 
 void RS485Comm::Disconnect() {
@@ -115,36 +152,38 @@ bool RS485Comm::Connect(const char* pDevice) {
   sp_set_stopbits(m_pSerialPort, 1);
   sp_set_xon_xoff(m_pSerialPort, SP_XONXOFF_DISABLED);
 
+  auto sendAndDelete = [this](Event* event) {
+    SendEvent(event);
+    delete event;
+  };
+
   sp_flush(m_pSerialPort, SP_BUF_BOTH);
   // Wait before continuing.
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++) {
-    // Let the boards synchronize themselves to the RS485 bus.
-    SendEvent(new Event(EVENT_NULL));
-    SendConfigEvent(new ConfigEvent(i));
-    SendEvent(new Event(EVENT_NULL));
-  }
 
-  // End previous game. The reset timer of the boards is configured to 3 seconds
-  // to reset all devices.
-  SendEvent(new Event(EVENT_RESET));
-  // Wait before continuing.
-  // The EffectControllers get a grace period atfer the reset event to turn off
-  // all effect devices before the reset happens After the reset, each IO boards
-  // waits a bit for a USB debugger connection before turning on.
+  // Reset boards before sending a fresh configuration. This handles
+  // restart-without-power-cycle scenarios.
+  SendResetFrame();
   std::this_thread::sleep_for(
       std::chrono::milliseconds(WAIT_FOR_IO_BOARD_RESET));
 
   for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++) {
-    // Let the boards synchronize themselves again to the RS485 bus.
-    SendEvent(new Event(EVENT_NULL));
+    // Let the boards synchronize themselves to the RS485 bus.
+    sendAndDelete(new Event(EVENT_NULL));
     SendConfigEvent(new ConfigEvent(i));
-    SendEvent(new Event(EVENT_NULL));
+    sendAndDelete(new Event(EVENT_NULL));
+  }
+
+  for (int i = 0; i < RS485_COMM_MAX_BOARDS; i++) {
+    // Let the boards synchronize themselves again to the RS485 bus.
+    sendAndDelete(new Event(EVENT_NULL));
+    SendConfigEvent(new ConfigEvent(i));
+    sendAndDelete(new Event(EVENT_NULL));
   }
 
   // Wait before continuing.
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  SendEvent(new Event(EVENT_PING));
+  sendAndDelete(new Event(EVENT_PING));
   // Wait before continuing.
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -159,8 +198,36 @@ bool RS485Comm::Connect(const char* pDevice) {
 }
 
 void RS485Comm::RegisterSwitchBoard(uint8_t number) {
-  if (m_switchBoardCounter < RS485_COMM_MAX_BOARDS) {
-    m_switchBoards[m_switchBoardCounter++] = number;
+  if (m_switchBoardCounter < RS485_COMM_MAX_BOARDS && number < RS485_COMM_MAX_BOARDS) {
+    m_switchBoards[m_switchBoardCounter] = number;
+    m_switchBoardCounter++;
+  }
+}
+
+void RS485Comm::SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config) {
+  if (ppuc::v2::IsValidRuntimeConfig(config)) {
+    m_runtimeConfig = config;
+  }
+}
+
+void RS485Comm::SetMappings(const std::vector<uint16_t>& coils,
+                            const std::vector<uint16_t>& lamps,
+                            const std::vector<uint16_t>& switches) {
+  m_coilIndexToNumber = coils;
+  m_lampIndexToNumber = lamps;
+  m_switchIndexToNumber = switches;
+
+  m_coilNumberToIndex.clear();
+  m_lampNumberToIndex.clear();
+  m_switchNumberToIndex.clear();
+  for (uint16_t i = 0; i < m_coilIndexToNumber.size(); ++i) {
+    m_coilNumberToIndex[m_coilIndexToNumber[i]] = i;
+  }
+  for (uint16_t i = 0; i < m_lampIndexToNumber.size(); ++i) {
+    m_lampNumberToIndex[m_lampIndexToNumber[i]] = i;
+  }
+  for (uint16_t i = 0; i < m_switchIndexToNumber.size(); ++i) {
+    m_switchNumberToIndex[m_switchIndexToNumber[i]] = i;
   }
 }
 
@@ -183,42 +250,260 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
   // Wait a bit to not exceed the output buffer in case of large configurations.
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-  if (m_pSerialPort != NULL) {
-    m_cmsg[0] = 0b11111111;
-    m_cmsg[1] = event->sourceId;
-    m_cmsg[2] = event->boardId;
-    m_cmsg[3] = event->topic;
-    m_cmsg[4] = event->index;
-    m_cmsg[5] = event->key;
-    m_cmsg[6] = event->value >> 24;
-    m_cmsg[7] = (event->value >> 16) & 0xff;
-    m_cmsg[8] = (event->value >> 8) & 0xff;
-    m_cmsg[9] = event->value & 0xff;
-    m_cmsg[10] = 0b10101010;
-    m_cmsg[11] = 0b01010101;
-
+  if (m_pSerialPort == NULL || !event) {
     delete event;
+    return false;
+  }
 
-    if (sp_blocking_write(m_pSerialPort, m_cmsg, 12,
-                          RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
-      if (m_debug) {
-        // @todo user logger
-        printf(
-            "Sent ConfigEvent %02X %d %d %d %d %d %02x%02x%02x%02x %02X %02X\n",
-            m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5],
-            m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10], m_cmsg[11]);
-      }
-      return true;
-    } else {
-      if (m_debug) {
-        // @todo user logger
-        printf(
-            "Error when sending ConfigEvent %02X %d %d %d %d %d "
-            "%02x%02x%02x%02x %02X %02X\n",
-            m_cmsg[0], m_cmsg[1], m_cmsg[2], m_cmsg[3], m_cmsg[4], m_cmsg[5],
-            m_cmsg[6], m_cmsg[7], m_cmsg[8], m_cmsg[9], m_cmsg[10], m_cmsg[11]);
-      }
+  uint8_t buffer[ppuc::v2::kConfigFrameBytes];
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameConfig,
+                                            ppuc::v2::kFlagKeyframe);
+  buffer[2] = ppuc::v2::kNoBoard;
+  buffer[3] = m_sequence++;
+  buffer[4] = event->boardId;
+  buffer[5] = event->topic;
+  buffer[6] = event->index;
+  buffer[7] = event->key;
+  buffer[8] = static_cast<uint8_t>((event->value >> 24) & 0xff);
+  buffer[9] = static_cast<uint8_t>((event->value >> 16) & 0xff);
+  buffer[10] = static_cast<uint8_t>((event->value >> 8) & 0xff);
+  buffer[11] = static_cast<uint8_t>(event->value & 0xff);
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes +
+                                                        ppuc::v2::kConfigPayloadBytes);
+  buffer[12] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[13] = static_cast<uint8_t>(crc & 0xff);
+
+  delete event;
+
+  if (sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
+                        RS485_COMM_SERIAL_WRITE_TIMEOUT) > 0) {
+    if (m_debug) {
+      printf("Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u\n",
+             buffer[4], buffer[5], buffer[6], buffer[7], buffer[3]);
     }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::SendSetupFrame() {
+  if (m_pSerialPort == NULL || !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
+    return false;
+  }
+
+  uint8_t buffer[ppuc::v2::kSetupFrameBytes];
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameSetup,
+                                            ppuc::v2::kFlagKeyframe);
+  buffer[2] = ppuc::v2::kNoBoard;
+  buffer[3] = m_sequence++;
+  buffer[4] = static_cast<uint8_t>((m_runtimeConfig.coilBits >> 8) & 0xff);
+  buffer[5] = static_cast<uint8_t>(m_runtimeConfig.coilBits & 0xff);
+  buffer[6] = static_cast<uint8_t>((m_runtimeConfig.lampBits >> 8) & 0xff);
+  buffer[7] = static_cast<uint8_t>(m_runtimeConfig.lampBits & 0xff);
+  buffer[8] = static_cast<uint8_t>((m_runtimeConfig.switchBits >> 8) & 0xff);
+  buffer[9] = static_cast<uint8_t>(m_runtimeConfig.switchBits & 0xff);
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes +
+                                                        ppuc::v2::kSetupPayloadBytes);
+  buffer[10] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[11] = static_cast<uint8_t>(crc & 0xff);
+
+  if (sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
+                        RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
+    if (m_debug) {
+      printf("Sent V2 SetupFrame coil=%u lamp=%u switch=%u seq=%u\n",
+             m_runtimeConfig.coilBits, m_runtimeConfig.lampBits,
+             m_runtimeConfig.switchBits, buffer[3]);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::SendResetFrame() {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  uint8_t buffer[ppuc::v2::kResetFrameBytes];
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameReset,
+                                            ppuc::v2::kFlagNone);
+  buffer[2] = ppuc::v2::kNoBoard;
+  buffer[3] = m_sequence++;
+  const uint16_t crc =
+      ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
+  buffer[4] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[5] = static_cast<uint8_t>(crc & 0xff);
+
+  if (sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
+                        RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
+    if (m_debug) {
+      printf("Sent V2 ResetFrame seq=%u\n", buffer[3]);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
+                                 uint16_t number) {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  uint8_t buffer[ppuc::v2::kMappingFrameBytes];
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameMapping,
+                                            ppuc::v2::kFlagKeyframe);
+  buffer[2] = ppuc::v2::kNoBoard;
+  buffer[3] = m_sequence++;
+  buffer[4] = domain;
+  buffer[5] = 0;
+  buffer[6] = static_cast<uint8_t>((index >> 8) & 0xff);
+  buffer[7] = static_cast<uint8_t>(index & 0xff);
+  buffer[8] = static_cast<uint8_t>((number >> 8) & 0xff);
+  buffer[9] = static_cast<uint8_t>(number & 0xff);
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes +
+                                                        ppuc::v2::kMappingPayloadBytes);
+  buffer[10] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[11] = static_cast<uint8_t>(crc & 0xff);
+
+  return sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
+                           RS485_COMM_SERIAL_WRITE_TIMEOUT) > 0;
+}
+
+bool RS485Comm::SendMappingFrames() {
+  for (uint16_t i = 0; i < m_coilIndexToNumber.size(); ++i) {
+    if (!SendMappingFrame(ppuc::v2::kDomainCoil, i, m_coilIndexToNumber[i])) {
+      return false;
+    }
+  }
+  for (uint16_t i = 0; i < m_lampIndexToNumber.size(); ++i) {
+    if (!SendMappingFrame(ppuc::v2::kDomainLamp, i, m_lampIndexToNumber[i])) {
+      return false;
+    }
+  }
+  for (uint16_t i = 0; i < m_switchIndexToNumber.size(); ++i) {
+    if (!SendMappingFrame(ppuc::v2::kDomainSwitch, i,
+                          m_switchIndexToNumber[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
+  if (m_pSerialPort == NULL || !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig) ||
+      !ppuc::v2::IsValidBoard(nextBoard)) {
+    return false;
+  }
+
+  const size_t coilBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.coilBits);
+  const size_t lampBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.lampBits);
+  const size_t payloadBytes = coilBytes + lampBytes;
+  const size_t frameBytes = ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
+  uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kMaxCoilBytes +
+                 ppuc::v2::kMaxLampBytes + ppuc::v2::kCrcBytes];
+
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameOutputState,
+                                            ppuc::v2::kFlagKeyframe);
+  buffer[2] = nextBoard;
+  buffer[3] = m_sequence++;
+
+  {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    memcpy(&buffer[4], m_coilBitmap, coilBytes);
+    memcpy(&buffer[4 + coilBytes], m_lampBitmap, lampBytes);
+  }
+
+  const uint16_t crc =
+      ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes + payloadBytes);
+  buffer[4 + payloadBytes] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[5 + payloadBytes] = static_cast<uint8_t>(crc & 0xff);
+
+  return sp_blocking_write(m_pSerialPort, buffer, frameBytes,
+                           RS485_COMM_SERIAL_WRITE_TIMEOUT) > 0;
+}
+
+void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
+  for (uint16_t n = 0; n < m_runtimeConfig.switchBits; ++n) {
+    const bool oldState = ppuc::v2::GetBitmapBit(m_switchBitmap, n);
+    const bool newState = ppuc::v2::GetBitmapBit(bitmap, n);
+    if (oldState != newState) {
+      int switchNumber = n;
+      if (n < m_switchIndexToNumber.size()) {
+        switchNumber = m_switchIndexToNumber[n];
+      }
+      std::lock_guard<std::mutex> lock(m_switchesQueueMutex);
+      m_switches.push(new PPUCSwitchState(switchNumber, newState ? 1 : 0));
+    }
+  }
+
+  memcpy(m_switchBitmap, bitmap, bytes);
+}
+
+bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard) {
+  if (m_pSerialPort == NULL || !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
+    return false;
+  }
+
+  const size_t switchBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.switchBits);
+  const size_t frameBytes =
+      ppuc::v2::kHeaderBytes + switchBytes + ppuc::v2::kCrcBytes;
+  uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kMaxSwitchBytes +
+                 ppuc::v2::kCrcBytes];
+
+  std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+  while ((std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - start))
+             .count() < 8000) {
+    if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
+      continue;
+    }
+
+    uint8_t sync = 0;
+    sp_blocking_read(m_pSerialPort, &sync, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (sync != ppuc::v2::kSyncByte) {
+      continue;
+    }
+
+    buffer[0] = sync;
+    sp_blocking_read(m_pSerialPort, &buffer[1], frameBytes - 1,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+
+    const ppuc::v2::FrameType frameType =
+        ppuc::v2::ExtractType(buffer[1]);
+    if (frameType != ppuc::v2::kFrameSwitchState) {
+      continue;
+    }
+
+    if (buffer[2] != ppuc::v2::kNoBoard && buffer[2] != expectedBoard &&
+        m_debug) {
+      printf("Warning: V2 switch frame nextBoard=%u expected=%u\n", buffer[2],
+             expectedBoard);
+    }
+
+    const uint16_t receivedCrc =
+        (static_cast<uint16_t>(buffer[frameBytes - 2]) << 8) |
+        static_cast<uint16_t>(buffer[frameBytes - 1]);
+    const uint16_t calculatedCrc =
+        ppuc::v2::Crc16Ccitt(buffer, frameBytes - ppuc::v2::kCrcBytes);
+    if (receivedCrc != calculatedCrc) {
+      if (m_debug) {
+        printf("Invalid V2 switch frame CRC: got=%04X expected=%04X\n",
+               receivedCrc, calculatedCrc);
+      }
+      return false;
+    }
+
+    ApplySwitchBitmapDiff(&buffer[ppuc::v2::kHeaderBytes], switchBytes);
+    return true;
   }
 
   return false;
@@ -353,6 +638,7 @@ void RS485Comm::PollEvents(int board) {
 
   Event* event = new Event(EVENT_POLL_EVENTS, 1, board);
   if (SendEvent(event)) {
+    delete event;
     // Wait until the i/o board switched to RS485 send mode.
     std::this_thread::sleep_for(
         std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
@@ -393,5 +679,7 @@ void RS485Comm::PollEvents(int board) {
     // Wait until the i/o board switched back to RS485 receive mode.
     std::this_thread::sleep_for(
         std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
+  } else {
+    delete event;
   }
 }
