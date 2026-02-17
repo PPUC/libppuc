@@ -2,6 +2,64 @@
 
 #include "io-boards/PPUCTimings.h"
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <linux/serial.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
+
+#if defined(__linux__)
+namespace {
+bool ShouldEnableHardwareRs485(const char* device) {
+  const char* force = getenv("PPUC_RS485_HW");
+  if (force && strcmp(force, "1") == 0) {
+    return true;
+  }
+  if (!device) {
+    return false;
+  }
+
+  // Raspberry Pi UART commonly used with RS485 overlay.
+  return strcmp(device, "/dev/ttyAMA0") == 0 ||
+         strcmp(device, "/dev/serial0") == 0;
+}
+
+void TryEnableHardwareRs485(const char* device, bool debug) {
+  if (!ShouldEnableHardwareRs485(device)) {
+    return;
+  }
+
+  const int fd = open(device, O_RDWR | O_NOCTTY);
+  if (fd < 0) {
+    if (debug) {
+      printf("RS485 HW mode: could not open %s for TIOCSRS485\n", device);
+    }
+    return;
+  }
+
+  struct serial_rs485 rs485;
+  memset(&rs485, 0, sizeof(rs485));
+  rs485.flags |= SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND;
+  rs485.flags &= ~SER_RS485_RTS_AFTER_SEND;
+  rs485.delay_rts_before_send = 0;
+  rs485.delay_rts_after_send = 0;
+
+  if (ioctl(fd, TIOCSRS485, &rs485) < 0) {
+    if (debug) {
+      printf("RS485 HW mode: TIOCSRS485 failed on %s\n", device);
+    }
+  } else if (debug) {
+    printf("RS485 HW mode enabled on %s (RTS as DE)\n", device);
+  }
+
+  close(fd);
+}
+}  // namespace
+#endif
+
 RS485Comm::RS485Comm() {
   m_pThread = NULL;
   m_pSerialPort = NULL;
@@ -130,6 +188,10 @@ void RS485Comm::Disconnect() {
 }
 
 bool RS485Comm::Connect(const char* pDevice) {
+#if defined(__linux__)
+  TryEnableHardwareRs485(pDevice, m_debug);
+#endif
+
   enum sp_return result = sp_get_port_by_name(pDevice, &m_pSerialPort);
   if (result != SP_OK) {
     return false;
