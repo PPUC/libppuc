@@ -66,14 +66,12 @@ void RS485Comm::Run() {
 
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0) {
-        nextBoard = m_switchBoards[m_switchBoardIndex];
-        m_switchBoardIndex =
-            (uint8_t)((m_switchBoardIndex + 1) % m_switchBoardCounter);
+        nextBoard = m_switchBoards[0];
       }
 
       SendOutputStateFrame(nextBoard);
       if (nextBoard != ppuc::v2::kNoBoard) {
-        ReceiveSwitchStateFrame(nextBoard);
+        ReceiveSwitchStateChain(nextBoard);
       }
     }
 
@@ -323,6 +321,21 @@ bool RS485Comm::SendSetupFrame() {
   return false;
 }
 
+void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
+  uint8_t expected = firstBoard;
+  uint8_t next = ppuc::v2::kNoBoard;
+  bool hadState = false;
+  uint8_t hops = 0;
+
+  while (expected != ppuc::v2::kNoBoard &&
+         hops++ < RS485_COMM_MAX_BOARDS) {
+    if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
+      break;
+    }
+    expected = next;
+  }
+}
+
 bool RS485Comm::SendResetFrame() {
   if (m_pSerialPort == NULL) {
     return false;
@@ -448,14 +461,15 @@ void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
   memcpy(m_switchBitmap, bitmap, bytes);
 }
 
-bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard) {
+bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
+                                        uint8_t* outNextBoard,
+                                        bool* outHadState) {
   if (m_pSerialPort == NULL || !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
     return false;
   }
 
   const size_t switchBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.switchBits);
-  const size_t frameBytes =
-      ppuc::v2::kHeaderBytes + switchBytes + ppuc::v2::kCrcBytes;
+  uint8_t header[ppuc::v2::kHeaderBytes];
   uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kMaxSwitchBytes +
                  ppuc::v2::kCrcBytes];
 
@@ -467,28 +481,46 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard) {
       continue;
     }
 
-    uint8_t sync = 0;
-    sp_blocking_read(m_pSerialPort, &sync, 1, RS485_COMM_SERIAL_READ_TIMEOUT);
-    if (sync != ppuc::v2::kSyncByte) {
+    sp_blocking_read(m_pSerialPort, &header[0], 1, RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (header[0] != ppuc::v2::kSyncByte) {
       continue;
     }
 
-    buffer[0] = sync;
-    sp_blocking_read(m_pSerialPort, &buffer[1], frameBytes - 1,
+    sp_blocking_read(m_pSerialPort, &header[1], ppuc::v2::kHeaderBytes - 1,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+    const ppuc::v2::FrameType frameType =
+        ppuc::v2::ExtractType(header[1]);
+    size_t payloadBytes = 0;
+    if (frameType == ppuc::v2::kFrameSwitchState) {
+      payloadBytes = switchBytes;
+      if (outHadState) {
+        *outHadState = true;
+      }
+    } else if (frameType == ppuc::v2::kFrameSwitchNoChange) {
+      payloadBytes = 0;
+      if (outHadState) {
+        *outHadState = false;
+      }
+    } else {
+      continue;
+    }
+
+    memcpy(buffer, header, ppuc::v2::kHeaderBytes);
+    sp_blocking_read(m_pSerialPort, &buffer[ppuc::v2::kHeaderBytes],
+                     payloadBytes + ppuc::v2::kCrcBytes,
                      RS485_COMM_SERIAL_READ_TIMEOUT);
 
-    const ppuc::v2::FrameType frameType =
-        ppuc::v2::ExtractType(buffer[1]);
-    if (frameType != ppuc::v2::kFrameSwitchState) {
-      continue;
-    }
-
-    if (buffer[2] != ppuc::v2::kNoBoard && buffer[2] != expectedBoard &&
+    if (header[2] != ppuc::v2::kNoBoard && header[2] != expectedBoard &&
         m_debug) {
-      printf("Warning: V2 switch frame nextBoard=%u expected=%u\n", buffer[2],
+      printf("Warning: V2 switch frame nextBoard=%u expected=%u\n", header[2],
              expectedBoard);
     }
+    if (outNextBoard) {
+      *outNextBoard = header[2];
+    }
 
+    const size_t frameBytes =
+        ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
     const uint16_t receivedCrc =
         (static_cast<uint16_t>(buffer[frameBytes - 2]) << 8) |
         static_cast<uint16_t>(buffer[frameBytes - 1]);
@@ -502,7 +534,9 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard) {
       return false;
     }
 
-    ApplySwitchBitmapDiff(&buffer[ppuc::v2::kHeaderBytes], switchBytes);
+    if (frameType == ppuc::v2::kFrameSwitchState) {
+      ApplySwitchBitmapDiff(&buffer[ppuc::v2::kHeaderBytes], switchBytes);
+    }
     return true;
   }
 

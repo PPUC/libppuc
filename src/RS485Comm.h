@@ -74,7 +74,9 @@ class RS485Comm {
   Event* receiveEvent();
   void PollEvents(int board);
   bool SendOutputStateFrame(uint8_t nextBoard);
-  bool ReceiveSwitchStateFrame(uint8_t expectedBoard);
+  bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
+                               bool* outHadState);
+  void ReceiveSwitchStateChain(uint8_t firstBoard);
   void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
 

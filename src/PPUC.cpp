@@ -176,6 +176,7 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
 bool PPUC::Connect() {
   if (m_pRS485Comm->Connect(m_serial)) {
     uint8_t index = 0;
+    std::vector<uint8_t> switchBoards;
     const YAML::Node& boards = m_ppucConfig["boards"];
     for (YAML::Node n_board : boards) {
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
@@ -198,8 +199,20 @@ bool PPUC::Connect() {
       m_gameOnSolenoid = m_ppucConfig["gameOnSolenoid"].as<uint8_t>();
 
       if (n_board["pollEvents"].as<bool>()) {
-        m_pRS485Comm->RegisterSwitchBoard(n_board["number"].as<uint8_t>());
+        const uint8_t b = n_board["number"].as<uint8_t>();
+        m_pRS485Comm->RegisterSwitchBoard(b);
+        switchBoards.push_back(b);
       }
+    }
+
+    // Configure token-ring handoff for switch-capable boards only.
+    for (size_t i = 0; i < switchBoards.size(); ++i) {
+      const uint8_t current = switchBoards[i];
+      const uint8_t next =
+          (i + 1 < switchBoards.size()) ? switchBoards[i + 1] : ppuc::v2::kNoBoard;
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
+          (uint8_t)CONFIG_TOPIC_NEXT_BOARD, next));
     }
 
     // Send switch matrix configuration to I/O boards
