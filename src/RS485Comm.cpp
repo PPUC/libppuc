@@ -155,6 +155,16 @@ void RS485Comm::QueueEvent(Event* event) {
 
     case EVENT_SOURCE_LIGHT:
     case EVENT_SOURCE_GI: {
+      if (event->sourceId == EVENT_SOURCE_GI) {
+        if (event->eventId >= 1 && event->eventId <= ppuc::v2::kGiStrings) {
+          std::lock_guard<std::mutex> lock(m_stateMutex);
+          m_giLevels[event->eventId - 1] =
+              ppuc::v2::ClampGiLevel(event->value);
+        }
+        delete event;
+        return;
+      }
+
       auto it = m_lampNumberToIndex.find(event->eventId);
       if (it != m_lampNumberToIndex.end() && it->second < ppuc::v2::kMaxLampBits) {
         std::lock_guard<std::mutex> lock(m_stateMutex);
@@ -480,10 +490,11 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
 
   const size_t coilBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.coilBits);
   const size_t lampBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.lampBits);
-  const size_t payloadBytes = coilBytes + lampBytes;
+  const size_t payloadBytes = coilBytes + lampBytes + ppuc::v2::kGiBytes;
   const size_t frameBytes = ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
   uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kMaxCoilBytes +
-                 ppuc::v2::kMaxLampBytes + ppuc::v2::kCrcBytes];
+                 ppuc::v2::kMaxLampBytes + ppuc::v2::kGiBytes +
+                 ppuc::v2::kCrcBytes];
 
   buffer[0] = ppuc::v2::kSyncByte;
   buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameOutputState,
@@ -495,6 +506,11 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     memcpy(&buffer[4], m_coilBitmap, coilBytes);
     memcpy(&buffer[4 + coilBytes], m_lampBitmap, lampBytes);
+    memset(&buffer[4 + coilBytes + lampBytes], 0, ppuc::v2::kGiBytes);
+    for (uint8_t giString = 0; giString < ppuc::v2::kGiStrings; ++giString) {
+      ppuc::v2::SetPackedNibble(&buffer[4 + coilBytes + lampBytes], giString,
+                                m_giLevels[giString]);
+    }
   }
 
   const uint16_t crc =

@@ -101,6 +101,7 @@ class RS485Comm {
 
   uint8_t m_coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
   uint8_t m_lampBitmap[ppuc::v2::kMaxLampBytes] = {0};
+  uint8_t m_giLevels[ppuc::v2::kGiStrings] = {0};
   uint8_t m_switchBitmap[ppuc::v2::kMaxSwitchBytes] = {0};
 
   // Event message buffers, we need two independent for events and config events

@@ -46,6 +46,7 @@ class PPUCAPI PPUC {
 
   void SetSolenoidState(int number, int state);
   void SetLampState(int number, int state);
+  void SetGIState(int string, int brightness);
   PPUCSwitchState* GetNextSwitchState();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };

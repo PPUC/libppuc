@@ -557,9 +557,16 @@ bool PPUC::Connect() {
     for (const auto& coil : m_coils) {
       coilNumbers.insert(coil.number);
     }
+    for (const auto& lamp : m_lamps) {
+      if (lamp.type == LED_TYPE_FLASHER) {
+        coilNumbers.insert(lamp.number);
+      }
+    }
     std::set<uint16_t> lampNumbers;
     for (const auto& lamp : m_lamps) {
-      lampNumbers.insert(lamp.number);
+      if (lamp.type == LED_TYPE_LAMP) {
+        lampNumbers.insert(lamp.number);
+      }
     }
     std::set<uint16_t> switchNumbers;
     for (const auto& sw : m_switches) {
@@ -594,8 +601,7 @@ bool PPUC::Connect() {
 
     // Turn on the GI for non WPC platforms.
     if (PLATFORM_WPC != m_platform) {
-      m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_GI, /* string */ 1,
-                                         /* full brightness */ 8));
+      SetGIState(/* string */ 1, /* full brightness */ 8);
     }
 
     // Tell I/O boards to read initial switch states, for example coin door
@@ -620,6 +626,20 @@ void PPUC::SetLampState(int number, int state) {
   uint16_t lampNo = number;
   uint8_t lampState = state == 0 ? 0 : 1;
   m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_LIGHT, lampNo, lampState));
+}
+
+void PPUC::SetGIState(int string, int brightness) {
+  if (string < 1 || string > ppuc::v2::kGiStrings) {
+    return;
+  }
+
+  uint8_t giBrightness = 0;
+  if (brightness > 0) {
+    giBrightness = static_cast<uint8_t>(brightness);
+  }
+  m_pRS485Comm->QueueEvent(new Event(
+      EVENT_SOURCE_GI, static_cast<uint16_t>(string),
+      ppuc::v2::ClampGiLevel(giBrightness)));
 }
 
 PPUCSwitchState* PPUC::GetNextSwitchState() {
@@ -792,10 +812,9 @@ void PPUC::GITest(uint8_t number) {
     }
 
     printf("Setting GI String %d to brightness to %d\n", i, 8);
-    m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_GI, /* string */ i,
-                                       /* full brightness */ 8));
+    SetGIState(/* string */ i, /* full brightness */ 8);
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-    m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_GI, /* string */ i, 0));
+    SetGIState(/* string */ i, 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 }
