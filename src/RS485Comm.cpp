@@ -2,6 +2,8 @@
 
 #include "io-boards/PPUCTimings.h"
 
+#include <string>
+
 #if defined(__linux__)
 #include <fcntl.h>
 #include <linux/serial.h>
@@ -60,6 +62,29 @@ void TryEnableHardwareRs485(const char* device, bool debug) {
 }  // namespace
 #endif
 
+#if defined(__APPLE__)
+namespace {
+std::string NormalizeSerialDevice(const char* device, bool debug) {
+  if (!device) {
+    return {};
+  }
+
+  const std::string name(device);
+  const std::string ttyPrefix = "/dev/tty.";
+  if (name.rfind(ttyPrefix, 0) == 0) {
+    const std::string normalized = "/dev/cu." + name.substr(ttyPrefix.size());
+    if (debug) {
+      printf("macOS serial: using callout device %s instead of %s\n",
+             normalized.c_str(), name.c_str());
+    }
+    return normalized;
+  }
+
+  return name;
+}
+}  // namespace
+#endif
+
 RS485Comm::RS485Comm() {
   m_pThread = NULL;
   m_pSerialPort = NULL;
@@ -95,6 +120,37 @@ void RS485Comm::LogMessage(const char* format, ...) {
 }
 
 void RS485Comm::SetDebug(bool debug) { m_debug = debug; }
+
+bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
+                           size_t size) {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  const int written = sp_blocking_write(m_pSerialPort, buffer, size,
+                                        RS485_COMM_SERIAL_WRITE_TIMEOUT);
+  if (written == static_cast<int>(size)) {
+    return true;
+  }
+
+  if (m_debug) {
+    if (written < 0) {
+      char* errorMessage = sp_last_error_message();
+      if (errorMessage) {
+        printf("Serial write failed for %s: %s\n", context, errorMessage);
+        sp_free_error_message(errorMessage);
+      } else {
+        printf("Serial write failed for %s: libserialport error %d\n", context,
+               written);
+      }
+    } else {
+      printf("Serial write incomplete for %s: wrote %d of %zu bytes\n",
+             context, written, size);
+    }
+  }
+
+  return false;
+}
 
 void RS485Comm::Run() {
   m_pThread = new std::thread([this]() {
@@ -202,13 +258,32 @@ bool RS485Comm::Connect(const char* pDevice) {
   TryEnableHardwareRs485(pDevice, m_debug);
 #endif
 
-  enum sp_return result = sp_get_port_by_name(pDevice, &m_pSerialPort);
+  const char* device = pDevice;
+#if defined(__APPLE__)
+  const std::string normalizedDevice = NormalizeSerialDevice(pDevice, m_debug);
+  if (!normalizedDevice.empty()) {
+    device = normalizedDevice.c_str();
+  }
+#endif
+
+  if (m_debug) {
+    printf("Opening serial device %s at %d baud\n", device,
+           RS485_COMM_BAUD_RATE);
+  }
+
+  enum sp_return result = sp_get_port_by_name(device, &m_pSerialPort);
   if (result != SP_OK) {
+    if (m_debug) {
+      printf("sp_get_port_by_name failed for %s: %d\n", device, result);
+    }
     return false;
   }
 
   result = sp_open(m_pSerialPort, SP_MODE_READ_WRITE);
   if (result != SP_OK) {
+    if (m_debug) {
+      printf("sp_open failed for %s: %d\n", device, result);
+    }
     sp_free_port(m_pSerialPort);
     m_pSerialPort = NULL;
     return false;
@@ -346,8 +421,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
 
   delete event;
 
-  if (sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
-                        RS485_COMM_SERIAL_WRITE_TIMEOUT) > 0) {
+  if (WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
       printf("Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u\n",
              buffer[4], buffer[5], buffer[6], buffer[7], buffer[3]);
@@ -380,8 +454,7 @@ bool RS485Comm::SendSetupFrame() {
   buffer[10] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[11] = static_cast<uint8_t>(crc & 0xff);
 
-  if (sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
-                        RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
+  if (WriteBytes("SetupFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
       printf("Sent V2 SetupFrame coil=%u lamp=%u switch=%u seq=%u\n",
              m_runtimeConfig.coilBits, m_runtimeConfig.lampBits,
@@ -424,8 +497,7 @@ bool RS485Comm::SendResetFrame() {
   buffer[4] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[5] = static_cast<uint8_t>(crc & 0xff);
 
-  if (sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
-                        RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
+  if (WriteBytes("ResetFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
       printf("Sent V2 ResetFrame seq=%u\n", buffer[3]);
     }
@@ -458,8 +530,7 @@ bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
   buffer[10] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[11] = static_cast<uint8_t>(crc & 0xff);
 
-  return sp_blocking_write(m_pSerialPort, buffer, sizeof(buffer),
-                           RS485_COMM_SERIAL_WRITE_TIMEOUT) > 0;
+  return WriteBytes("MappingFrame", buffer, sizeof(buffer));
 }
 
 bool RS485Comm::SendMappingFrames() {
@@ -518,8 +589,7 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
   buffer[4 + payloadBytes] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[5 + payloadBytes] = static_cast<uint8_t>(crc & 0xff);
 
-  return sp_blocking_write(m_pSerialPort, buffer, frameBytes,
-                           RS485_COMM_SERIAL_WRITE_TIMEOUT) > 0;
+  return WriteBytes("OutputStateFrame", buffer, frameBytes);
 }
 
 void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
@@ -631,8 +701,7 @@ bool RS485Comm::SendEvent(Event* event) {
     m_msg[5] = 0b10101010;
     m_msg[6] = 0b01010101;
 
-    if (sp_blocking_write(m_pSerialPort, m_msg, 7,
-                          RS485_COMM_SERIAL_WRITE_TIMEOUT)) {
+    if (WriteBytes("LegacyEvent", m_msg, sizeof(m_msg))) {
       if (m_debug) {
         // @todo use logger
         printf("Sent Event %d %d %d\n", event->sourceId, event->eventId,

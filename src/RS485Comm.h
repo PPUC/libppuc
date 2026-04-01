@@ -22,7 +22,7 @@
 #define CALLBACK
 #endif
 
-#define RS485_COMM_BAUD_RATE 250000
+#define RS485_COMM_BAUD_RATE 115200
 #define RS485_COMM_SERIAL_READ_TIMEOUT 2
 #define RS485_COMM_SERIAL_WRITE_TIMEOUT 4
 
@@ -79,6 +79,7 @@ class RS485Comm {
   void ReceiveSwitchStateChain(uint8_t firstBoard);
   void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
+  bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
 
   PPUC_LogMessageCallback m_logMessageCallback = nullptr;
   const void* m_logMessageUserData = nullptr;
