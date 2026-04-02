@@ -198,6 +198,21 @@ When modifying this area, keep both paths coherent unless the migration is expli
 - `QueueEvent()` silently ignores lamp/coil numbers that are absent from the derived mappings.
 - GI uses fixed runtime slots rather than the dynamic mapping tables used for coils, lamps, and switches.
 
+## Confirmed Timing Behavior
+
+- The current host-side switch-chain timing matters for overall runtime quality, not only for switch test.
+- Confirmed on real hardware: increasing the switch-reply receive window, increasing the serial read timeout, flushing stale input after a missed chain, and delaying session resync until several consecutive misses made the lamp attract-mode animation visibly correct again.
+- This means aggressive switch timeout/resync behavior can degrade normal output animation even when lamps still appear generally active.
+- Keep these timing values as part of the current known-good baseline unless testing proves a better set.
+- For future games with more switch boards, expect these values to need retuning. Treat them as transport tuning parameters, not protocol constants.
+
+Current transport-tuning points to remember in `RS485Comm`:
+
+- `RS485_COMM_SERIAL_READ_TIMEOUT`
+- switch-reply receive window in `ReceiveSwitchStateFrame()`
+- stale-input flush after a missed switch-reply chain
+- miss-count threshold before `m_needSessionResync = true`
+
 ## Next Bring-Up Focus
 
 When debugging `v2` end-to-end, start with:
@@ -207,3 +222,4 @@ When debugging `v2` end-to-end, start with:
 3. Check that `pollEvents: true` boards also receive `CONFIG_TOPIC_SWITCH_CHAIN`.
 4. Run a single-board switch test first, then multi-board token chaining.
 5. If Linux RS485 direction control looks wrong, test with and without `PPUC_RS485_HW=1`.
+6. When multi-board switch chaining mostly works but animation or switch latency looks wrong, tune timing before changing protocol semantics.

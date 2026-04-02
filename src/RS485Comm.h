@@ -24,7 +24,7 @@
 #endif
 
 #define RS485_COMM_BAUD_RATE 115200
-#define RS485_COMM_SERIAL_READ_TIMEOUT 2
+#define RS485_COMM_SERIAL_READ_TIMEOUT 5
 #define RS485_COMM_SERIAL_WRITE_TIMEOUT 4
 
 #define RS485_COMM_MAX_BOARDS 8
@@ -97,6 +97,7 @@ class RS485Comm {
   uint8_t m_epoch = 1;
   uint8_t m_lastOutputSequenceSent = 0;
   bool m_needSessionResync = false;
+  uint8_t m_switchReplyMisses = 0;
   ppuc::v2::RuntimeConfig m_runtimeConfig;
   std::vector<uint16_t> m_coilIndexToNumber;
   std::vector<uint16_t> m_lampIndexToNumber;

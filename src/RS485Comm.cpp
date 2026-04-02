@@ -530,13 +530,26 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
   uint8_t next = ppuc::v2::kNoBoard;
   bool hadState = false;
   uint8_t hops = 0;
+  bool success = true;
 
   while (expected != ppuc::v2::kNoBoard && hops++ < RS485_COMM_MAX_BOARDS) {
     if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
-      m_needSessionResync = true;
+      success = false;
       break;
     }
     expected = next;
+  }
+
+  if (success) {
+    m_switchReplyMisses = 0;
+  } else {
+    ++m_switchReplyMisses;
+    if (m_debug) {
+      printf("Missed V2 switch reply chain %u time(s)\n", m_switchReplyMisses);
+    }
+    if (m_switchReplyMisses >= 3) {
+      m_needSessionResync = true;
+    }
   }
 }
 
@@ -552,6 +565,10 @@ bool RS485Comm::ResyncSession() {
   if (!SendMappingFrames()) {
     return false;
   }
+  // Drop any stale switch replies that were still in flight from the previous
+  // epoch before the runtime loop starts polling again.
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   m_needSessionResync = false;
   return true;
 }
@@ -712,7 +729,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       std::chrono::steady_clock::now();
   while ((std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - start))
-             .count() < 8000) {
+             .count() < 20000) {
     if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
       continue;
     }
@@ -732,12 +749,24 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       if (outHadState) {
         *outHadState = true;
       }
+      if (m_debug) {
+        printf("Received V2 switch state frame for board token %u\n",
+               expectedBoard);
+      }
     } else if (frameType == ppuc::v2::kFrameSwitchNoChange) {
       payloadBytes = ppuc::v2::SwitchNoChangePayloadBytes();
       if (outHadState) {
         *outHadState = false;
       }
+      if (m_debug) {
+        printf("Received V2 switch no-change frame for board token %u\n",
+               expectedBoard);
+      }
     } else {
+      if (m_debug) {
+        printf("Ignoring unexpected V2 frame type 0x%02X while waiting for switch reply\n",
+               static_cast<unsigned>(frameType));
+      }
       continue;
     }
 
@@ -746,11 +775,6 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
                      payloadBytes + ppuc::v2::kCrcBytes,
                      RS485_COMM_SERIAL_READ_TIMEOUT);
 
-    if (header[2] != ppuc::v2::kNoBoard && header[2] != expectedBoard &&
-        m_debug) {
-      printf("Warning: V2 switch frame nextBoard=%u expected=%u\n", header[2],
-             expectedBoard);
-    }
     if (outNextBoard) {
       *outNextBoard = header[2];
     }
@@ -802,10 +826,19 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       ApplySwitchBitmapDiff(
           &buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes],
           switchBytes);
+      if (m_debug) {
+        printf("Applied V2 switch bitmap diff for board token %u\n",
+               expectedBoard);
+      }
     }
     return true;
   }
 
+  if (m_debug) {
+    printf("Timed out waiting for V2 switch reply for board token %u\n",
+           expectedBoard);
+  }
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
   return false;
 }
 

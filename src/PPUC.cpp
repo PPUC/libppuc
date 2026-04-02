@@ -299,19 +299,6 @@ bool PPUC::Connect() {
     switchMapping.resize(runtimeConfig.switchBits);
     m_pRS485Comm->SetMappings(coilMapping, lampMapping, switchMapping);
     m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
-    m_pRS485Comm->SendSetupFrame();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    m_pRS485Comm->SendMappingFrames();
-
-    // Configure token-ring handoff for switch-capable boards only.
-    for (size_t i = 0; i < switchBoards.size(); ++i) {
-      const uint8_t current = switchBoards[i];
-      const uint8_t next =
-          (i + 1 < switchBoards.size()) ? switchBoards[i + 1] : ppuc::v2::kNoBoard;
-      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-          current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
-          (uint8_t)CONFIG_TOPIC_NEXT_BOARD, next));
-    }
 
     // Send switch matrix configuration to I/O boards
     // IMPORTANT: This must be done before sending individual switch configs
@@ -646,6 +633,23 @@ bool PPUC::Connect() {
       }
     }
 
+    // Configure token-ring handoff for switch-capable boards before the V2
+    // setup frame starts runtime processing on the boards.
+    for (size_t i = 0; i < switchBoards.size(); ++i) {
+      const uint8_t current = switchBoards[i];
+      const uint8_t next = (i + 1 < switchBoards.size())
+                               ? switchBoards[i + 1]
+                               : ppuc::v2::kNoBoard;
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
+          (uint8_t)CONFIG_TOPIC_NEXT_BOARD, next));
+    }
+
+    // Start the V2 runtime only after all board-local config was applied.
+    m_pRS485Comm->SendSetupFrame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    m_pRS485Comm->SendMappingFrames();
+
     // Wait before continuing.
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
@@ -884,22 +888,50 @@ void PPUC::SwitchTest() {
   printf("Switch Test\n");
   printf("=========\n");
 
+  const auto switches = GetSwitches();
+  if (!switches.empty()) {
+    printf("Configured switches:\n");
+    for (const auto& vswitch : switches) {
+      printf("  #%d  board=%d port=%d  %s\n", vswitch.number, vswitch.board,
+             vswitch.port, vswitch.description.c_str());
+    }
+    printf("\nWaiting for switch activity...\n");
+    fflush(stdout);
+  }
+
+  bool giPolarityKnown = false;
+  bool giOnWhenClosed = false;
   PPUCSwitchState* switchState;
   while (true) {
     if ((switchState = GetNextSwitchState()) != nullptr) {
-      auto it = std::find_if(m_switches.begin(), m_switches.end(),
+      auto it = std::find_if(switches.begin(), switches.end(),
                              [switchState](const PPUCSwitch& vswitch) {
                                return vswitch.number == switchState->number;
                              });
+      const char* stateName = switchState->state ? "closed" : "open";
 
-      if (it != m_switches.end()) {
-        printf("Switch updated: #%d, %d\nDescription: %s", switchState->number,
-               switchState->state, it->description.c_str());
-        printf("\n");
+      if (it != switches.end()) {
+        printf("Switch updated: #%d, %d (%s)\nBoard: %d\nPort: %d\nDescription: %s\n",
+               switchState->number, switchState->state, stateName, it->board,
+               it->port, it->description.c_str());
       } else {
-        printf("Switch updated: #%d, %d\n", switchState->number,
-               switchState->state);
+        printf("Switch updated: #%d, %d (%s)\n", switchState->number,
+               switchState->state, stateName);
       }
+
+      if (PLATFORM_WPC != m_platform) {
+        if (!giPolarityKnown) {
+          // If the first state we ever observe is already closed, assume the
+          // switch started closed and invert the GI feedback polarity.
+          giOnWhenClosed = switchState->state != 0;
+          giPolarityKnown = true;
+        }
+
+        const bool giOn =
+            (switchState->state != 0) ? giOnWhenClosed : !giOnWhenClosed;
+        SetGIState(/* string */ 1, giOn ? 8 : 0);
+      }
+      fflush(stdout);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
