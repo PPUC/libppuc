@@ -911,11 +911,11 @@ void PPUC::SwitchTest() {
       const char* stateName = switchState->state ? "closed" : "open";
 
       if (it != switches.end()) {
-        printf("Switch updated: #%d, %d (%s)\nBoard: %d\nPort: %d\nDescription: %s\n",
+        printf("Switch updated: #%d, %d (%s)\nBoard: %d\nPort: %d\nDescription: %s\n\n",
                switchState->number, switchState->state, stateName, it->board,
                it->port, it->description.c_str());
       } else {
-        printf("Switch updated: #%d, %d (%s)\n", switchState->number,
+        printf("Switch updated: #%d, %d (%s)\n\n", switchState->number,
                switchState->state, stateName);
       }
 
