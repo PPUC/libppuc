@@ -51,6 +51,7 @@ class PPUCAPI PPUC {
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
+  uint8_t GetPlatform() { return m_platform; };
 
   void CoilTest(uint8_t number);
   void LampTest(uint8_t number);

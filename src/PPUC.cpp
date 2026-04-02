@@ -78,11 +78,31 @@ void PPUC::LoadConfiguration(const char* configFile) {
   strcpy(m_serial, c_serial.c_str());
   std::string c_platform = m_ppucConfig["platform"].as<std::string>();
   m_platform = PLATFORM_WPC;
-  if (strcmp(c_platform.c_str(), "DE") == 0) {
+  if (strcmp(c_platform.c_str(), "WPC") == 0) {
+    m_platform = PLATFORM_WPC;
+  } else if (strcmp(c_platform.c_str(), "DE") == 0) {
     m_platform = PLATFORM_DATA_EAST;
+  } else if (strcmp(c_platform.c_str(), "SYS3") == 0) {
+    m_platform = PLATFORM_SYS3;
   } else if (strcmp(c_platform.c_str(), "SYS4") == 0) {
     m_platform = PLATFORM_SYS4;
+  } else if (strcmp(c_platform.c_str(), "SYS6") == 0) {
+    m_platform = PLATFORM_SYS6;
+  } else if (strcmp(c_platform.c_str(), "SYS7") == 0) {
+    m_platform = PLATFORM_SYS7;
   } else if (strcmp(c_platform.c_str(), "SYS11") == 0) {
+    m_platform = PLATFORM_SYS11;
+  } else if (strcmp(c_platform.c_str(), "BALLY35") == 0) {
+    m_platform = PLATFORM_BALLY35;
+  } else if (strcmp(c_platform.c_str(), "WHITESTAR") == 0) {
+    m_platform = PLATFORM_WHITESTAR;
+  } else if (strcmp(c_platform.c_str(), "SAM") == 0) {
+    m_platform = PLATFORM_SAM;
+  } else if (strcmp(c_platform.c_str(), "CAPCOM") == 0) {
+    m_platform = PLATFORM_CAPCOM;
+  } else {
+    // Default unknown platforms to non-WPC behavior so features like
+    // always-on GI do not silently disappear on older systems.
     m_platform = PLATFORM_SYS11;
   }
 }
@@ -673,6 +693,12 @@ PPUCSwitchState* PPUC::GetNextSwitchState() {
 }
 
 void PPUC::StartUpdates() {
+  if (PLATFORM_WPC != m_platform) {
+    // Older systems such as System 6 do not provide useful GI updates through
+    // PinMAME, so reassert the single default GI string when runtime output
+    // starts.
+    SetGIState(/* string */ 1, /* full brightness */ 8);
+  }
   m_pRS485Comm->QueueEvent(new Event(EVENT_RUN, 1, 1));
 }
 
