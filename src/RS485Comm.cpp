@@ -258,9 +258,22 @@ void RS485Comm::Disconnect() {
     return;
   }
 
-  sp_set_config(m_pSerialPort, m_pSerialPortConfig);
-  sp_free_config(m_pSerialPortConfig);
-  m_pSerialPortConfig = NULL;
+  // Some USB-RS485 adapters/drivers keep modem-control/flow-control state
+  // across close/open cycles. Drain and explicitly deassert those lines before
+  // closing so the next run starts from a neutral adapter state.
+  sp_drain(m_pSerialPort);
+  sp_flush(m_pSerialPort, SP_BUF_BOTH);
+  sp_set_flowcontrol(m_pSerialPort, SP_FLOWCONTROL_NONE);
+  sp_set_rts(m_pSerialPort, SP_RTS_OFF);
+  sp_set_dtr(m_pSerialPort, SP_DTR_OFF);
+
+  if (m_pSerialPortConfig != NULL) {
+    sp_set_config(m_pSerialPort, m_pSerialPortConfig);
+    sp_free_config(m_pSerialPortConfig);
+    m_pSerialPortConfig = NULL;
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
   sp_close(m_pSerialPort);
   sp_free_port(m_pSerialPort);
@@ -321,6 +334,8 @@ bool RS485Comm::Connect(const char* pDevice) {
       sp_set_config_parity(m_pSerialPortConfig, SP_PARITY_NONE) != SP_OK ||
       sp_set_config_stopbits(m_pSerialPortConfig, 1) != SP_OK ||
       sp_set_config_xon_xoff(m_pSerialPortConfig, SP_XONXOFF_DISABLED) !=
+          SP_OK ||
+      sp_set_config_flowcontrol(m_pSerialPortConfig, SP_FLOWCONTROL_NONE) !=
           SP_OK) {
     if (m_debug) {
       printf("sp_set_* serial config failed\n");
@@ -343,6 +358,11 @@ bool RS485Comm::Connect(const char* pDevice) {
     m_pSerialPort = NULL;
     return false;
   }
+  // Apply a fully passive host-side serial state. This avoids adapters getting
+  // wedged by inherited flow-control or modem-control settings between runs.
+  sp_set_flowcontrol(m_pSerialPort, SP_FLOWCONTROL_NONE);
+  sp_set_rts(m_pSerialPort, SP_RTS_OFF);
+  sp_set_dtr(m_pSerialPort, SP_DTR_OFF);
 
   sp_flush(m_pSerialPort, SP_BUF_BOTH);
   // Wait before continuing.
@@ -358,6 +378,11 @@ bool RS485Comm::Connect(const char* pDevice) {
   SendResetFrame();
   std::this_thread::sleep_for(
       std::chrono::milliseconds(WAIT_FOR_IO_BOARD_RESET));
+  // Boards can finish rebooting slightly before the USB-RS485 adapter and host
+  // driver have fully drained stale bytes. Start configuration from a clean
+  // RX/TX state after the reset window closes.
+  sp_flush(m_pSerialPort, SP_BUF_BOTH);
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
   return true;
 }
