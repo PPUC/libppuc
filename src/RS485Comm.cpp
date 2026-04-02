@@ -178,6 +178,13 @@ void RS485Comm::Run() {
         continue;
       }
 
+      if (m_needSessionResync) {
+        if (!ResyncSession()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          continue;
+        }
+      }
+
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0) {
         nextBoard = m_switchBoards[0];
@@ -298,24 +305,61 @@ bool RS485Comm::Connect(const char* pDevice) {
 
   sp_new_config(&m_pSerialPortConfig);
   sp_get_config(m_pSerialPort, m_pSerialPortConfig);
-  sp_set_baudrate(m_pSerialPort, RS485_COMM_BAUD_RATE);
-  sp_set_bits(m_pSerialPort, 8);
-  sp_set_parity(m_pSerialPort, SP_PARITY_NONE);
-  sp_set_stopbits(m_pSerialPort, 1);
-  sp_set_xon_xoff(m_pSerialPort, SP_XONXOFF_DISABLED);
+  if (sp_set_config_baudrate(m_pSerialPortConfig, RS485_COMM_BAUD_RATE) !=
+      SP_OK) {
+    if (m_debug) {
+      printf("sp_set_baudrate failed\n");
+    }
+    sp_free_config(m_pSerialPortConfig);
+    m_pSerialPortConfig = NULL;
+    sp_close(m_pSerialPort);
+    sp_free_port(m_pSerialPort);
+    m_pSerialPort = NULL;
+    return false;
+  }
+  if (sp_set_config_bits(m_pSerialPortConfig, 8) != SP_OK ||
+      sp_set_config_parity(m_pSerialPortConfig, SP_PARITY_NONE) != SP_OK ||
+      sp_set_config_stopbits(m_pSerialPortConfig, 1) != SP_OK ||
+      sp_set_config_xon_xoff(m_pSerialPortConfig, SP_XONXOFF_DISABLED) !=
+          SP_OK) {
+    if (m_debug) {
+      printf("sp_set_* serial config failed\n");
+    }
+    sp_free_config(m_pSerialPortConfig);
+    m_pSerialPortConfig = NULL;
+    sp_close(m_pSerialPort);
+    sp_free_port(m_pSerialPort);
+    m_pSerialPort = NULL;
+    return false;
+  }
+  if (sp_set_config(m_pSerialPort, m_pSerialPortConfig) != SP_OK) {
+    if (m_debug) {
+      printf("sp_set_config failed\n");
+    }
+    sp_free_config(m_pSerialPortConfig);
+    m_pSerialPortConfig = NULL;
+    sp_close(m_pSerialPort);
+    sp_free_port(m_pSerialPort);
+    m_pSerialPort = NULL;
+    return false;
+  }
 
   sp_flush(m_pSerialPort, SP_BUF_BOTH);
   // Wait before continuing.
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  m_needSessionResync = false;
+  m_epoch = 1;
+  m_sequence = 0;
+  m_lastOutputSequenceSent = 0;
 
   // Reset boards before sending a fresh configuration. This handles
   // restart-without-power-cycle scenarios.
   SendResetFrame();
   std::this_thread::sleep_for(
       std::chrono::milliseconds(WAIT_FOR_IO_BOARD_RESET));
-}
 
-return true;
+  return true;
 }
 
 void RS485Comm::RegisterSwitchBoard(uint8_t number) {
@@ -383,25 +427,26 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
                                             ppuc::v2::kFlagKeyframe);
   buffer[2] = ppuc::v2::kNoBoard;
   buffer[3] = m_sequence++;
-  buffer[4] = event->boardId;
-  buffer[5] = event->topic;
-  buffer[6] = event->index;
-  buffer[7] = event->key;
-  buffer[8] = static_cast<uint8_t>((event->value >> 24) & 0xff);
-  buffer[9] = static_cast<uint8_t>((event->value >> 16) & 0xff);
-  buffer[10] = static_cast<uint8_t>((event->value >> 8) & 0xff);
-  buffer[11] = static_cast<uint8_t>(event->value & 0xff);
+  buffer[4] = m_epoch;
+  buffer[5] = event->boardId;
+  buffer[6] = event->topic;
+  buffer[7] = event->index;
+  buffer[8] = event->key;
+  buffer[9] = static_cast<uint8_t>((event->value >> 24) & 0xff);
+  buffer[10] = static_cast<uint8_t>((event->value >> 16) & 0xff);
+  buffer[11] = static_cast<uint8_t>((event->value >> 8) & 0xff);
+  buffer[12] = static_cast<uint8_t>(event->value & 0xff);
   const uint16_t crc = ppuc::v2::Crc16Ccitt(
       buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes);
-  buffer[12] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[13] = static_cast<uint8_t>(crc & 0xff);
+  buffer[13] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[14] = static_cast<uint8_t>(crc & 0xff);
 
   delete event;
 
   if (WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
       printf("Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u\n",
-             buffer[4], buffer[5], buffer[6], buffer[7], buffer[3]);
+             buffer[5], buffer[6], buffer[7], buffer[8], buffer[3]);
     }
     return true;
   }
@@ -421,16 +466,17 @@ bool RS485Comm::SendSetupFrame() {
                                             ppuc::v2::kFlagKeyframe);
   buffer[2] = ppuc::v2::kNoBoard;
   buffer[3] = m_sequence++;
-  buffer[4] = static_cast<uint8_t>((m_runtimeConfig.coilBits >> 8) & 0xff);
-  buffer[5] = static_cast<uint8_t>(m_runtimeConfig.coilBits & 0xff);
-  buffer[6] = static_cast<uint8_t>((m_runtimeConfig.lampBits >> 8) & 0xff);
-  buffer[7] = static_cast<uint8_t>(m_runtimeConfig.lampBits & 0xff);
-  buffer[8] = static_cast<uint8_t>((m_runtimeConfig.switchBits >> 8) & 0xff);
-  buffer[9] = static_cast<uint8_t>(m_runtimeConfig.switchBits & 0xff);
+  buffer[4] = m_epoch;
+  buffer[5] = static_cast<uint8_t>((m_runtimeConfig.coilBits >> 8) & 0xff);
+  buffer[6] = static_cast<uint8_t>(m_runtimeConfig.coilBits & 0xff);
+  buffer[7] = static_cast<uint8_t>((m_runtimeConfig.lampBits >> 8) & 0xff);
+  buffer[8] = static_cast<uint8_t>(m_runtimeConfig.lampBits & 0xff);
+  buffer[9] = static_cast<uint8_t>((m_runtimeConfig.switchBits >> 8) & 0xff);
+  buffer[10] = static_cast<uint8_t>(m_runtimeConfig.switchBits & 0xff);
   const uint16_t crc = ppuc::v2::Crc16Ccitt(
       buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kSetupPayloadBytes);
-  buffer[10] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[11] = static_cast<uint8_t>(crc & 0xff);
+  buffer[11] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[12] = static_cast<uint8_t>(crc & 0xff);
 
   if (WriteBytes("SetupFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
@@ -452,10 +498,27 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
 
   while (expected != ppuc::v2::kNoBoard && hops++ < RS485_COMM_MAX_BOARDS) {
     if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
+      m_needSessionResync = true;
       break;
     }
     expected = next;
   }
+}
+
+bool RS485Comm::ResyncSession() {
+  ++m_epoch;
+  if (m_debug) {
+    printf("Starting V2 session resync epoch=%u\n", m_epoch);
+  }
+  if (!SendSetupFrame()) {
+    return false;
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  if (!SendMappingFrames()) {
+    return false;
+  }
+  m_needSessionResync = false;
+  return true;
 }
 
 bool RS485Comm::SendResetFrame() {
@@ -469,9 +532,10 @@ bool RS485Comm::SendResetFrame() {
       ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameReset, ppuc::v2::kFlagNone);
   buffer[2] = ppuc::v2::kNoBoard;
   buffer[3] = m_sequence++;
+  buffer[4] = m_epoch;
   const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
-  buffer[4] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[5] = static_cast<uint8_t>(crc & 0xff);
+  buffer[5] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[6] = static_cast<uint8_t>(crc & 0xff);
 
   if (WriteBytes("ResetFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
@@ -500,16 +564,17 @@ bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
                                             ppuc::v2::kFlagKeyframe);
   buffer[2] = ppuc::v2::kNoBoard;
   buffer[3] = m_sequence++;
-  buffer[4] = domain;
-  buffer[5] = 0;
-  buffer[6] = static_cast<uint8_t>((index >> 8) & 0xff);
-  buffer[7] = static_cast<uint8_t>(index & 0xff);
-  buffer[8] = static_cast<uint8_t>((number >> 8) & 0xff);
-  buffer[9] = static_cast<uint8_t>(number & 0xff);
+  buffer[4] = m_epoch;
+  buffer[5] = domain;
+  buffer[6] = 0;
+  buffer[7] = static_cast<uint8_t>((index >> 8) & 0xff);
+  buffer[8] = static_cast<uint8_t>(index & 0xff);
+  buffer[9] = static_cast<uint8_t>((number >> 8) & 0xff);
+  buffer[10] = static_cast<uint8_t>(number & 0xff);
   const uint16_t crc = ppuc::v2::Crc16Ccitt(
       buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kMappingPayloadBytes);
-  buffer[10] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[11] = static_cast<uint8_t>(crc & 0xff);
+  buffer[11] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[12] = static_cast<uint8_t>(crc & 0xff);
 
   return WriteBytes("MappingFrame", buffer, sizeof(buffer));
 }
@@ -555,22 +620,24 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
                                             ppuc::v2::kFlagKeyframe);
   buffer[2] = nextBoard;
   buffer[3] = m_sequence++;
+  buffer[4] = m_epoch;
+  m_lastOutputSequenceSent = buffer[3];
 
   {
     std::lock_guard<std::mutex> lock(m_stateMutex);
-    memcpy(&buffer[4], m_coilBitmap, coilBytes);
-    memcpy(&buffer[4 + coilBytes], m_lampBitmap, lampBytes);
-    memset(&buffer[4 + coilBytes + lampBytes], 0, ppuc::v2::kGiBytes);
+    memcpy(&buffer[5], m_coilBitmap, coilBytes);
+    memcpy(&buffer[5 + coilBytes], m_lampBitmap, lampBytes);
+    memset(&buffer[5 + coilBytes + lampBytes], 0, ppuc::v2::kGiBytes);
     for (uint8_t giString = 0; giString < ppuc::v2::kGiStrings; ++giString) {
-      ppuc::v2::SetPackedNibble(&buffer[4 + coilBytes + lampBytes], giString,
+      ppuc::v2::SetPackedNibble(&buffer[5 + coilBytes + lampBytes], giString,
                                 m_giLevels[giString]);
     }
   }
 
   const uint16_t crc =
       ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes + payloadBytes);
-  buffer[4 + payloadBytes] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[5 + payloadBytes] = static_cast<uint8_t>(crc & 0xff);
+  buffer[5 + payloadBytes] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[6 + payloadBytes] = static_cast<uint8_t>(crc & 0xff);
 
   return WriteBytes("OutputStateFrame", buffer, frameBytes);
 }
@@ -602,7 +669,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
 
   const size_t switchBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.switchBits);
   uint8_t header[ppuc::v2::kHeaderBytes];
-  uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kMaxSwitchBytes +
+  uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes +
+                 ppuc::v2::kMaxSwitchBytes +
                  ppuc::v2::kCrcBytes];
 
   std::chrono::steady_clock::time_point start =
@@ -625,12 +693,12 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     const ppuc::v2::FrameType frameType = ppuc::v2::ExtractType(header[1]);
     size_t payloadBytes = 0;
     if (frameType == ppuc::v2::kFrameSwitchState) {
-      payloadBytes = switchBytes;
+      payloadBytes = ppuc::v2::SwitchPayloadBytes(m_runtimeConfig);
       if (outHadState) {
         *outHadState = true;
       }
     } else if (frameType == ppuc::v2::kFrameSwitchNoChange) {
-      payloadBytes = 0;
+      payloadBytes = ppuc::v2::SwitchNoChangePayloadBytes();
       if (outHadState) {
         *outHadState = false;
       }
@@ -652,6 +720,34 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       *outNextBoard = header[2];
     }
 
+    const uint8_t epochSeen = buffer[ppuc::v2::kHeaderBytes];
+    const uint8_t lastHostSequenceSeen = buffer[ppuc::v2::kHeaderBytes + 1];
+    const uint8_t statusFlags = buffer[ppuc::v2::kHeaderBytes + 2];
+
+    if (epochSeen != m_epoch) {
+      if (m_debug) {
+        printf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u\n",
+               expectedBoard, epochSeen, m_epoch);
+      }
+      m_needSessionResync = true;
+    }
+    if (lastHostSequenceSeen != m_lastOutputSequenceSent) {
+      if (m_debug) {
+        printf("V2 switch reply sequence mismatch: board=%u seen=%u expected=%u\n",
+               expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
+      }
+      m_needSessionResync = true;
+    }
+    if ((statusFlags & (ppuc::v2::kStatusNeedsSetup |
+                        ppuc::v2::kStatusMappingIncomplete |
+                        ppuc::v2::kStatusSequenceGap)) != 0) {
+      if (m_debug) {
+        printf("V2 switch reply requested resync: board=%u flags=0x%02X\n",
+               expectedBoard, statusFlags);
+      }
+      m_needSessionResync = true;
+    }
+
     const size_t frameBytes =
         ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
     const uint16_t receivedCrc =
@@ -668,7 +764,9 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     }
 
     if (frameType == ppuc::v2::kFrameSwitchState) {
-      ApplySwitchBitmapDiff(&buffer[ppuc::v2::kHeaderBytes], switchBytes);
+      ApplySwitchBitmapDiff(
+          &buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes],
+          switchBytes);
     }
     return true;
   }

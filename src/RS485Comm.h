@@ -73,6 +73,7 @@ class RS485Comm {
   bool SendEvent(Event* event);
   Event* receiveEvent();
   void PollEvents(int board);
+  bool ResyncSession();
   bool SendOutputStateFrame(uint8_t nextBoard);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState);
@@ -92,6 +93,9 @@ class RS485Comm {
   bool m_debug = false;
   bool m_runtimeEnabled = true;
   uint8_t m_sequence = 0;
+  uint8_t m_epoch = 1;
+  uint8_t m_lastOutputSequenceSent = 0;
+  bool m_needSessionResync = false;
   ppuc::v2::RuntimeConfig m_runtimeConfig;
   std::vector<uint16_t> m_coilIndexToNumber;
   std::vector<uint16_t> m_lampIndexToNumber;
