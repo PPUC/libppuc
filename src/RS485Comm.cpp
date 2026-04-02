@@ -96,9 +96,8 @@ RS485Comm::~RS485Comm() {
   Disconnect();
 
   if (m_pThread) {
-    m_pThread->join();
-
     delete m_pThread;
+    m_pThread = NULL;
   }
 }
 
@@ -153,10 +152,11 @@ bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
 }
 
 void RS485Comm::Run() {
+  m_stopRequested = false;
   m_pThread = new std::thread([this]() {
     LogMessage("RS485Comm run thread starting");
 
-    while (m_pSerialPort != NULL) {
+    while (!m_stopRequested) {
       uint8_t eventsSent = 0;
       while (eventsSent++ < RS485_COMM_MAX_EVENTS_TO_SEND) {
         Event* event = nullptr;
@@ -254,6 +254,14 @@ void RS485Comm::QueueEvent(Event* event) {
 }
 
 void RS485Comm::Disconnect() {
+  m_stopRequested = true;
+
+  if (m_pThread && m_pThread->joinable()) {
+    m_pThread->join();
+    delete m_pThread;
+    m_pThread = NULL;
+  }
+
   if (m_pSerialPort == NULL) {
     return;
   }
@@ -292,6 +300,8 @@ bool RS485Comm::Connect(const char* pDevice) {
     device = normalizedDevice.c_str();
   }
 #endif
+
+  m_stopRequested = false;
 
   if (m_debug) {
     printf("Opening serial device %s at %d baud\n", device,

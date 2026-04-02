@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdarg.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -122,4 +123,5 @@ class RS485Comm {
   std::mutex m_eventQueueMutex;
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;
+  std::atomic<bool> m_stopRequested{false};
 };
