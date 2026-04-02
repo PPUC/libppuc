@@ -754,6 +754,10 @@ void PPUC::LampTest(uint8_t number) {
   printf("Lamp Test\n");
   printf("=========\n");
 
+  // Keep GI dark during the lamp walk so mixed GI/lamp strings do not wash out
+  // the individual lamp test results. Restore the default non-WPC GI afterward.
+  SetGIState(/* string */ 1, 0);
+
   if (number != 0) {
     for (const auto& lamp : GetLamps()) {
       if (lamp.type == LED_TYPE_LAMP && lamp.number == number) {
@@ -795,18 +799,23 @@ void PPUC::LampTest(uint8_t number) {
         SetLampState(lamp.number, 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       }
+    }
 
-      for (const auto& coil : GetCoils()) {
-        if (coil.type == PWM_TYPE_LAMP) {
-          printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
-                 coil.board, coil.port, coil.number, coil.description.c_str());
-          SetSolenoidState(coil.number, 1);
-          std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-          SetSolenoidState(coil.number, 0);
-          std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        }
+    for (const auto& coil : GetCoils()) {
+      if (coil.type == PWM_TYPE_LAMP) {
+        printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
+               coil.board, coil.port, coil.number, coil.description.c_str());
+        SetSolenoidState(coil.number, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        SetSolenoidState(coil.number, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       }
     }
+  }
+
+  if (PLATFORM_WPC != m_platform) {
+    printf("\nRestoring GI String 1 to brightness %d\n", 8);
+    SetGIState(/* string */ 1, /* full brightness */ 8);
   }
 }
 
@@ -886,6 +895,7 @@ void PPUC::SwitchTest() {
       if (it != m_switches.end()) {
         printf("Switch updated: #%d, %d\nDescription: %s", switchState->number,
                switchState->state, it->description.c_str());
+        printf("\n");
       } else {
         printf("Switch updated: #%d, %d\n", switchState->number,
                switchState->state);
