@@ -177,6 +177,9 @@ bool PPUC::Connect() {
   if (m_pRS485Comm->Connect(m_serial)) {
     uint8_t index = 0;
     std::vector<uint8_t> switchBoards;
+    std::set<uint16_t> coilNumbers;
+    std::set<uint16_t> lampNumbers;
+    std::set<uint16_t> switchNumbers;
     const YAML::Node& boards = m_ppucConfig["boards"];
     for (YAML::Node n_board : boards) {
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
@@ -205,6 +208,81 @@ bool PPUC::Connect() {
       }
     }
 
+    const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
+    if (switchMatrix) {
+      const YAML::Node& matrixSwitches = switchMatrix["switches"];
+      if (matrixSwitches) {
+        for (YAML::Node n_switch : matrixSwitches) {
+          switchNumbers.insert(n_switch["number"].as<uint16_t>());
+        }
+      }
+    }
+
+    const YAML::Node& switches = m_ppucConfig["switches"];
+    if (switches) {
+      for (YAML::Node n_switch : switches) {
+        switchNumbers.insert(n_switch["number"].as<uint16_t>());
+      }
+    }
+
+    const YAML::Node& pwmOutput = m_ppucConfig["pwmOutput"];
+    if (pwmOutput) {
+      for (YAML::Node n_pwmOutput : pwmOutput) {
+        std::string c_type = n_pwmOutput["type"].as<std::string>();
+        const uint16_t number = n_pwmOutput["number"].as<uint16_t>();
+        if (strcmp(c_type.c_str(), "lamp") == 0) {
+          lampNumbers.insert(number);
+        } else {
+          coilNumbers.insert(number);
+        }
+      }
+    }
+
+    const YAML::Node& ledStripes = m_ppucConfig["ledStripes"];
+    if (ledStripes) {
+      for (YAML::Node n_ledStripe : ledStripes) {
+        const YAML::Node& lamps = n_ledStripe["lamps"];
+        if (lamps) {
+          for (YAML::Node n_lamp : lamps) {
+            lampNumbers.insert(n_lamp["number"].as<uint16_t>());
+          }
+        }
+        const YAML::Node& flashers = n_ledStripe["flashers"];
+        if (flashers) {
+          for (YAML::Node n_flasher : flashers) {
+            coilNumbers.insert(n_flasher["number"].as<uint16_t>());
+          }
+        }
+      }
+    }
+
+    std::vector<uint16_t> coilMapping(coilNumbers.begin(), coilNumbers.end());
+    std::vector<uint16_t> lampMapping(lampNumbers.begin(), lampNumbers.end());
+    std::vector<uint16_t> switchMapping(switchNumbers.begin(),
+                                        switchNumbers.end());
+
+    ppuc::v2::RuntimeConfig runtimeConfig;
+    runtimeConfig.coilBits =
+        std::max<uint16_t>(1, static_cast<uint16_t>(coilMapping.size()));
+    runtimeConfig.lampBits =
+        std::max<uint16_t>(1, static_cast<uint16_t>(lampMapping.size()));
+    runtimeConfig.switchBits =
+        std::max<uint16_t>(1, static_cast<uint16_t>(switchMapping.size()));
+    runtimeConfig.coilBits =
+        std::min<uint16_t>(runtimeConfig.coilBits, ppuc::v2::kMaxCoilBits);
+    runtimeConfig.lampBits =
+        std::min<uint16_t>(runtimeConfig.lampBits, ppuc::v2::kMaxLampBits);
+    runtimeConfig.switchBits =
+        std::min<uint16_t>(runtimeConfig.switchBits, ppuc::v2::kMaxSwitchBits);
+    coilMapping.resize(runtimeConfig.coilBits);
+    lampMapping.resize(runtimeConfig.lampBits);
+    switchMapping.resize(runtimeConfig.switchBits);
+    m_pRS485Comm->SetMappings(coilMapping, lampMapping, switchMapping);
+    m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
+    m_pRS485Comm->SendSetupFrame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    m_pRS485Comm->SendMappingFrames();
+
     // Configure token-ring handoff for switch-capable boards only.
     for (size_t i = 0; i < switchBoards.size(); ++i) {
       const uint8_t current = switchBoards[i];
@@ -219,7 +297,6 @@ bool PPUC::Connect() {
     // IMPORTANT: This must be done before sending individual switch configs
     // because the existence of a switch matrix changes the amount of dedicated
     // switches available.
-    const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
     if (switchMatrix) {
       index = 0;
       m_pRS485Comm->SendConfigEvent(
@@ -261,7 +338,6 @@ bool PPUC::Connect() {
     }
 
     // Send switch configuration to I/O boards
-    const YAML::Node& switches = m_ppucConfig["switches"];
     if (switches) {
       for (YAML::Node n_switch : switches) {
         if (m_debug) {
@@ -292,7 +368,6 @@ bool PPUC::Connect() {
     }
 
     // Send PWM configuration to I/O boards
-    const YAML::Node& pwmOutput = m_ppucConfig["pwmOutput"];
     if (pwmOutput) {
       for (YAML::Node n_pwmOutput : pwmOutput) {
         if (m_debug) {
@@ -415,7 +490,6 @@ bool PPUC::Connect() {
     }
 
     // Send LED configuration to I/O boards
-    const YAML::Node& ledStripes = m_ppucConfig["ledStripes"];
     if (ledStripes) {
       for (YAML::Node n_ledStripe : ledStripes) {
         index = 0;
@@ -552,50 +626,6 @@ bool PPUC::Connect() {
       }
     }
 
-    // Derive dense runtime mappings from configured states.
-    std::set<uint16_t> coilNumbers;
-    for (const auto& coil : m_coils) {
-      coilNumbers.insert(coil.number);
-    }
-    for (const auto& lamp : m_lamps) {
-      if (lamp.type == LED_TYPE_FLASHER) {
-        coilNumbers.insert(lamp.number);
-      }
-    }
-    std::set<uint16_t> lampNumbers;
-    for (const auto& lamp : m_lamps) {
-      if (lamp.type == LED_TYPE_LAMP) {
-        lampNumbers.insert(lamp.number);
-      }
-    }
-    std::set<uint16_t> switchNumbers;
-    for (const auto& sw : m_switches) {
-      switchNumbers.insert(sw.number);
-    }
-
-    std::vector<uint16_t> coilMapping(coilNumbers.begin(), coilNumbers.end());
-    std::vector<uint16_t> lampMapping(lampNumbers.begin(), lampNumbers.end());
-    std::vector<uint16_t> switchMapping(switchNumbers.begin(), switchNumbers.end());
-
-    ppuc::v2::RuntimeConfig runtimeConfig;
-    runtimeConfig.coilBits = std::max<uint16_t>(
-        1, static_cast<uint16_t>(coilMapping.size()));
-    runtimeConfig.lampBits = std::max<uint16_t>(
-        1, static_cast<uint16_t>(lampMapping.size()));
-    runtimeConfig.switchBits = std::max<uint16_t>(
-        1, static_cast<uint16_t>(switchMapping.size()));
-    runtimeConfig.coilBits = std::min<uint16_t>(runtimeConfig.coilBits, ppuc::v2::kMaxCoilBits);
-    runtimeConfig.lampBits = std::min<uint16_t>(runtimeConfig.lampBits, ppuc::v2::kMaxLampBits);
-    runtimeConfig.switchBits = std::min<uint16_t>(runtimeConfig.switchBits, ppuc::v2::kMaxSwitchBits);
-    coilMapping.resize(runtimeConfig.coilBits);
-    lampMapping.resize(runtimeConfig.lampBits);
-    switchMapping.resize(runtimeConfig.switchBits);
-    m_pRS485Comm->SetMappings(coilMapping, lampMapping, switchMapping);
-    m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
-    m_pRS485Comm->SendSetupFrame();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    m_pRS485Comm->SendMappingFrames();
-
     // Wait before continuing.
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
@@ -603,10 +633,6 @@ bool PPUC::Connect() {
     if (PLATFORM_WPC != m_platform) {
       SetGIState(/* string */ 1, /* full brightness */ 8);
     }
-
-    // Tell I/O boards to read initial switch states, for example coin door
-    // closed.
-    m_pRS485Comm->QueueEvent(new Event(EVENT_READ_SWITCHES));
 
     m_pRS485Comm->Run();
 
