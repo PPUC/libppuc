@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdarg.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -42,6 +43,10 @@
 #define RS485_COMM_QUEUE_SIZE_MAX 128
 #define RS485_COMM_SWITCH_POLL_INTERVAL_MS 3
 #define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
+#define RS485_COMM_FIRST_SWITCH_REPLY_GAP_MS 5
+#define RS485_COMM_POST_SWITCH_CHAIN_GAP_MS 5
+#define RS485_COMM_FIRST_SWITCH_REPLY_TIMEOUT_US 40000
+#define RS485_COMM_CHAINED_SWITCH_REPLY_TIMEOUT_US 20000
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 10
 #define RS485_COMM_RESYNC_COOLDOWN_MS 5000
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
@@ -101,7 +106,7 @@ class RS485Comm {
   bool ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
                         uint8_t key);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
-                               bool* outHadState);
+                               bool* outHadState, bool firstPhysicalBoard);
   bool SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
                               bool* outHadState);
   uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
@@ -110,6 +115,10 @@ class RS485Comm {
   void EnsureConfiguredBoardPresenceKnown();
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
+  void RecordSwitchReplyRxByte(uint8_t value);
+  void RecordSwitchReplyRxBytes(const uint8_t* buffer, size_t size);
+  void ResetSwitchReplyRxHistory();
+  void DumpSwitchReplyRxHistory(const char* reason, uint8_t expectedBoard);
   void DebugPrintf(const char* format, ...);
   void ErrorPrintf(const char* format, ...);
 
@@ -158,4 +167,7 @@ class RS485Comm {
   std::chrono::steady_clock::time_point m_nextSwitchPollAt;
   std::chrono::steady_clock::time_point m_nextAllowedResyncAt;
   bool m_boardPresenceFinalized = false;
+  std::array<uint8_t, 128> m_switchReplyRxHistory = {};
+  size_t m_switchReplyRxHistoryPos = 0;
+  size_t m_switchReplyRxHistoryCount = 0;
 };

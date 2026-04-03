@@ -85,6 +85,72 @@ std::string NormalizeSerialDevice(const char* device, bool debug) {
 }  // namespace
 #endif
 
+namespace {
+std::chrono::microseconds HostFrameWireTime(size_t frameBytes) {
+  const uint32_t bits = static_cast<uint32_t>(frameBytes) * 10u;
+  const uint32_t us = (bits * 1000000u) / RS485_COMM_BAUD_RATE;
+  // Give the USB-RS485 adapter one extra millisecond to fully flush the
+  // synthetic host-side switch reply onto the wire before the next physical
+  // board is expected to respond.
+  return std::chrono::microseconds(us + 1000u);
+}
+}  // namespace
+
+void RS485Comm::RecordSwitchReplyRxByte(uint8_t value) {
+  m_switchReplyRxHistory[m_switchReplyRxHistoryPos] = value;
+  m_switchReplyRxHistoryPos =
+      (m_switchReplyRxHistoryPos + 1) % m_switchReplyRxHistory.size();
+  if (m_switchReplyRxHistoryCount < m_switchReplyRxHistory.size()) {
+    ++m_switchReplyRxHistoryCount;
+  }
+}
+
+void RS485Comm::RecordSwitchReplyRxBytes(const uint8_t* buffer, size_t size) {
+  if (!buffer) {
+    return;
+  }
+  for (size_t i = 0; i < size; ++i) {
+    RecordSwitchReplyRxByte(buffer[i]);
+  }
+}
+
+void RS485Comm::ResetSwitchReplyRxHistory() {
+  m_switchReplyRxHistoryPos = 0;
+  m_switchReplyRxHistoryCount = 0;
+}
+
+void RS485Comm::DumpSwitchReplyRxHistory(const char* reason,
+                                         uint8_t expectedBoard) {
+  if (!(m_debug || m_debugErrors) || m_switchReplyRxHistoryCount == 0) {
+    return;
+  }
+
+  char bytes[(128 * 3) + 1];
+  size_t offset = 0;
+  const size_t start =
+      (m_switchReplyRxHistoryPos + m_switchReplyRxHistory.size() -
+       m_switchReplyRxHistoryCount) %
+      m_switchReplyRxHistory.size();
+  for (size_t i = 0; i < m_switchReplyRxHistoryCount; ++i) {
+    const uint8_t value =
+        m_switchReplyRxHistory[(start + i) % m_switchReplyRxHistory.size()];
+    const int written =
+        snprintf(&bytes[offset], sizeof(bytes) - offset, "%02X%s", value,
+                 (i + 1) < m_switchReplyRxHistoryCount ? " " : "");
+    if (written <= 0) {
+      break;
+    }
+    offset += static_cast<size_t>(written);
+    if (offset >= sizeof(bytes)) {
+      offset = sizeof(bytes) - 1;
+      break;
+    }
+  }
+
+  ErrorPrintf("Recent switch-reply RX bytes before %s for board token %u: %s",
+              reason, expectedBoard, bytes);
+}
+
 RS485Comm::RS485Comm() {
   m_pThread = NULL;
   m_pSerialPort = NULL;
@@ -247,7 +313,14 @@ void RS485Comm::Run() {
 
       SendOutputStateFrame(nextBoard);
       if (nextBoard != ppuc::v2::kNoBoard) {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(RS485_COMM_FIRST_SWITCH_REPLY_GAP_MS));
         ReceiveSwitchStateChain(nextBoard);
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(RS485_COMM_POST_SWITCH_CHAIN_GAP_MS));
+        m_nextOutputFrameAt = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(
+                                  RS485_COMM_OUTPUT_FRAME_INTERVAL_MS);
       }
     }
 
@@ -694,6 +767,7 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
   bool hadState = false;
   uint8_t hops = 0;
   bool success = true;
+  bool firstPhysicalBoard = true;
 
   while (expected != ppuc::v2::kNoBoard && hops++ < RS485_COMM_MAX_BOARDS) {
     if (m_virtualSwitchBoards.find(expected) != m_virtualSwitchBoards.end()) {
@@ -706,10 +780,12 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
       continue;
     }
 
-    if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
+    if (!ReceiveSwitchStateFrame(expected, &next, &hadState,
+                                 firstPhysicalBoard)) {
       success = false;
       break;
     }
+    firstPhysicalBoard = false;
     expected = next;
   }
 
@@ -802,6 +878,8 @@ bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
                   buffer, frameBytes)) {
     return false;
   }
+
+  std::this_thread::sleep_for(HostFrameWireTime(frameBytes));
 
   boardState.dirty = false;
   return true;
@@ -1161,7 +1239,8 @@ void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
 
 bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
                                         uint8_t* outNextBoard,
-                                        bool* outHadState) {
+                                        bool* outHadState,
+                                        bool firstPhysicalBoard) {
   if (m_pSerialPort == NULL ||
       !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
     return false;
@@ -1172,24 +1251,30 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
   uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes +
                  ppuc::v2::kMaxSwitchBytes +
                  ppuc::v2::kCrcBytes];
+  const int64_t timeoutUs = firstPhysicalBoard
+                                ? RS485_COMM_FIRST_SWITCH_REPLY_TIMEOUT_US
+                                : RS485_COMM_CHAINED_SWITCH_REPLY_TIMEOUT_US;
+  ResetSwitchReplyRxHistory();
 
   std::chrono::steady_clock::time_point start =
       std::chrono::steady_clock::now();
   while ((std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - start))
-             .count() < 20000) {
+             .count() < timeoutUs) {
     if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
       continue;
     }
 
     sp_blocking_read(m_pSerialPort, &header[0], 1,
                      RS485_COMM_SERIAL_READ_TIMEOUT);
+    RecordSwitchReplyRxByte(header[0]);
     if (header[0] != ppuc::v2::kSyncByte) {
       continue;
     }
 
     sp_blocking_read(m_pSerialPort, &header[1], ppuc::v2::kHeaderBytes - 1,
                      RS485_COMM_SERIAL_READ_TIMEOUT);
+    RecordSwitchReplyRxBytes(&header[1], ppuc::v2::kHeaderBytes - 1);
     const ppuc::v2::FrameType frameType = ppuc::v2::ExtractType(header[1]);
     size_t payloadBytes = 0;
     if (frameType == ppuc::v2::kFrameSwitchState) {
@@ -1223,6 +1308,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     sp_blocking_read(m_pSerialPort, &buffer[ppuc::v2::kHeaderBytes],
                      payloadBytes + ppuc::v2::kCrcBytes,
                      RS485_COMM_SERIAL_READ_TIMEOUT);
+    RecordSwitchReplyRxBytes(&buffer[ppuc::v2::kHeaderBytes],
+                             payloadBytes + ppuc::v2::kCrcBytes);
 
     if (outNextBoard) {
       *outNextBoard = header[2];
@@ -1237,6 +1324,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
         ErrorPrintf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
                     expectedBoard, epochSeen, m_epoch);
       }
+      DumpSwitchReplyRxHistory("epoch mismatch", expectedBoard);
+      sp_flush(m_pSerialPort, SP_BUF_INPUT);
       return false;
     }
     if (lastHostSequenceSeen != m_lastOutputSequenceSent) {
@@ -1245,6 +1334,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
             "V2 switch reply sequence mismatch: board=%u seen=%u expected=%u",
             expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
       }
+      DumpSwitchReplyRxHistory("sequence mismatch", expectedBoard);
+      sp_flush(m_pSerialPort, SP_BUF_INPUT);
       return false;
     }
     if ((statusFlags & (ppuc::v2::kStatusNeedsSetup |
@@ -1254,6 +1345,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
         ErrorPrintf("V2 switch reply requested resync: board=%u flags=0x%02X",
                     expectedBoard, statusFlags);
       }
+      DumpSwitchReplyRxHistory("status flag error", expectedBoard);
+      sp_flush(m_pSerialPort, SP_BUF_INPUT);
       return false;
     }
 
@@ -1269,6 +1362,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
         ErrorPrintf("Invalid V2 switch frame CRC: got=%04X expected=%04X",
                     receivedCrc, calculatedCrc);
       }
+      DumpSwitchReplyRxHistory("CRC error", expectedBoard);
+      sp_flush(m_pSerialPort, SP_BUF_INPUT);
       return false;
     }
 
@@ -1285,9 +1380,11 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
   }
 
   if (m_debug || m_debugErrors) {
-    ErrorPrintf("Timed out waiting for V2 switch reply for board token %u",
-                expectedBoard);
+    ErrorPrintf("Timed out waiting for V2 switch reply for board token %u%s",
+                expectedBoard,
+                firstPhysicalBoard ? " (first physical board)" : "");
   }
+  DumpSwitchReplyRxHistory("timeout", expectedBoard);
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
   return false;
 }

@@ -50,6 +50,7 @@ class PPUCAPI PPUC {
   void SetSwitchState(int number, int state);
   bool IsSwitchVirtualized(int number);
   void SetSkippedBoardsCsv(const char* boardsCsv);
+  void SetVirtualSwitchChainEnabled(bool enabled);
   bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
 
@@ -81,6 +82,7 @@ class PPUCAPI PPUC {
   uint8_t m_platform;
   uint8_t m_coinDoorClosedSwitch;
   uint8_t m_gameOnSolenoid;
+  bool m_virtualSwitchChainEnabled = true;
 
   void SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
                               uint8_t board, uint32_t port);

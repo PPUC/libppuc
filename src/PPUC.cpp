@@ -653,19 +653,30 @@ bool PPUC::Connect() {
 
     m_pRS485Comm->FinalizeConfiguredBoardPresence();
 
-    m_pRS485Comm->SetActiveSwitchBoards(switchBoards);
+    std::vector<uint8_t> activeSwitchBoards;
+    activeSwitchBoards.reserve(switchBoards.size());
+    for (const uint8_t board : switchBoards) {
+      if (!m_virtualSwitchChainEnabled &&
+          m_pRS485Comm->IsBoardVirtualized(board)) {
+        continue;
+      }
+      activeSwitchBoards.push_back(board);
+    }
+
+    m_pRS485Comm->SetActiveSwitchBoards(activeSwitchBoards);
 
     // Configure token-ring handoff across the full logical switch-board
     // order, including missing boards. The host will synthesize replies for
     // virtualized boards when the chain reaches their token.
-    for (size_t i = 0; i < switchBoards.size(); ++i) {
-      const uint8_t current = switchBoards[i];
+    for (size_t i = 0; i < activeSwitchBoards.size(); ++i) {
+      const uint8_t current = activeSwitchBoards[i];
       if (!m_pRS485Comm->IsBoardPresent(current)) {
         continue;
       }
 
       const uint8_t next =
-          (i + 1 < switchBoards.size()) ? switchBoards[i + 1] : ppuc::v2::kNoBoard;
+          (i + 1 < activeSwitchBoards.size()) ? activeSwitchBoards[i + 1]
+                                              : ppuc::v2::kNoBoard;
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
           (uint8_t)CONFIG_TOPIC_NEXT_BOARD, next));
@@ -744,6 +755,10 @@ void PPUC::SetSkippedBoardsCsv(const char* boardsCsv) {
     }
   }
   m_pRS485Comm->SetSkippedBoards(boards);
+}
+
+void PPUC::SetVirtualSwitchChainEnabled(bool enabled) {
+  m_virtualSwitchChainEnabled = enabled;
 }
 
 bool PPUC::IsBoardVirtualized(uint8_t board) {
