@@ -52,6 +52,7 @@ struct VirtualSwitchBoardState {
   uint8_t board = ppuc::v2::kNoBoard;
   std::vector<uint16_t> switchNumbers;
   std::vector<uint8_t> switchStates;
+  bool dirty = false;
 };
 
 class RS485Comm {
@@ -107,6 +108,9 @@ class RS485Comm {
                         uint8_t key);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState);
+  bool SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
+                              bool* outHadState);
+  uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
   void ReceiveSwitchStateChain(uint8_t firstBoard);
   void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
   void EnsureConfiguredBoardPresenceKnown();

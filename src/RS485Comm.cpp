@@ -627,6 +627,7 @@ bool RS485Comm::SetVirtualSwitchState(uint16_t number, uint8_t state) {
     }
 
     boardState.switchStates[i] = normalizedState;
+    boardState.dirty = true;
     {
       std::lock_guard<std::mutex> lock(m_stateMutex);
       const auto switchIt = m_switchNumberToIndex.find(number);
@@ -897,6 +898,16 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
   bool success = true;
 
   while (expected != ppuc::v2::kNoBoard && hops++ < RS485_COMM_MAX_BOARDS) {
+    if (m_virtualSwitchBoards.find(expected) != m_virtualSwitchBoards.end()) {
+      next = GetLogicalNextSwitchBoard(expected);
+      if (!SendVirtualSwitchReply(expected, next, &hadState)) {
+        success = false;
+        break;
+      }
+      expected = next;
+      continue;
+    }
+
     if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
       success = false;
       break;
@@ -916,6 +927,87 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
       m_needSessionResync = true;
     }
   }
+}
+
+uint8_t RS485Comm::GetLogicalNextSwitchBoard(uint8_t board) const {
+  for (uint8_t i = 0; i < m_switchBoardCounter; ++i) {
+    if (m_switchBoards[i] != board) {
+      continue;
+    }
+    if (i + 1 < m_switchBoardCounter) {
+      return m_switchBoards[i + 1];
+    }
+    return ppuc::v2::kNoBoard;
+  }
+
+  return ppuc::v2::kNoBoard;
+}
+
+bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
+                                       bool* outHadState) {
+  auto boardIt = m_virtualSwitchBoards.find(board);
+  if (boardIt == m_virtualSwitchBoards.end() || m_pSerialPort == NULL ||
+      !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
+    return false;
+  }
+
+  auto& boardState = boardIt->second;
+  const bool sendState = boardState.dirty;
+  if (outHadState) {
+    *outHadState = sendState;
+  }
+
+  const size_t switchBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.switchBits);
+  const size_t payloadBytes =
+      sendState ? ppuc::v2::SwitchPayloadBytes(m_runtimeConfig)
+                : ppuc::v2::SwitchNoChangePayloadBytes();
+  const size_t frameBytes =
+      ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
+  uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes +
+                 ppuc::v2::kMaxSwitchBytes + ppuc::v2::kCrcBytes];
+
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(
+      sendState ? ppuc::v2::kFrameSwitchState : ppuc::v2::kFrameSwitchNoChange,
+      sendState ? ppuc::v2::kFlagKeyframe : ppuc::v2::kFlagNone);
+  buffer[2] = nextBoard;
+  buffer[3] = m_lastOutputSequenceSent;
+  buffer[4] = m_epoch;
+  buffer[5] = m_epoch;
+  buffer[6] = m_lastOutputSequenceSent;
+  buffer[7] = ppuc::v2::kStatusInSync;
+  buffer[8] = 0;
+
+  if (sendState) {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    memcpy(&buffer[9], m_switchBitmap, switchBytes);
+  }
+
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(
+      buffer, ppuc::v2::kHeaderBytes + payloadBytes);
+  buffer[ppuc::v2::kHeaderBytes + payloadBytes] =
+      static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[ppuc::v2::kHeaderBytes + payloadBytes + 1] =
+      static_cast<uint8_t>(crc & 0xff);
+
+  if (m_debug) {
+    DebugPrintf("Sent virtual V2 switch %s frame for board token %u -> %u",
+                sendState ? "state" : "no-change", board, nextBoard);
+  }
+
+  if (m_switchReplyDelayUs > 0) {
+    std::this_thread::sleep_for(
+        std::chrono::microseconds(m_switchReplyDelayUs));
+  }
+
+  if (!WriteBytes(sendState ? "VirtualSwitchStateFrame"
+                            : "VirtualSwitchNoChangeFrame",
+                  buffer, frameBytes)) {
+    return false;
+  }
+
+  boardState.dirty = false;
+  return true;
 }
 
 bool RS485Comm::ResyncSession() {

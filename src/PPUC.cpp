@@ -713,20 +713,19 @@ bool PPUC::Connect() {
 
     m_pRS485Comm->FinalizeConfiguredBoardPresence();
 
-    std::vector<uint8_t> presentSwitchBoards;
-    for (const uint8_t board : switchBoards) {
-      if (m_pRS485Comm->IsBoardPresent(board)) {
-        presentSwitchBoards.push_back(board);
-      }
-    }
-    m_pRS485Comm->SetActiveSwitchBoards(presentSwitchBoards);
+    m_pRS485Comm->SetActiveSwitchBoards(switchBoards);
 
-    // Configure token-ring handoff only across boards that acknowledged
-    // configuration during startup.
-    for (size_t i = 0; i < presentSwitchBoards.size(); ++i) {
-      const uint8_t current = presentSwitchBoards[i];
-      const uint8_t next = (i + 1 < presentSwitchBoards.size())
-                               ? presentSwitchBoards[i + 1]
+    // Configure token-ring handoff across the full logical switch-board
+    // order, including virtualized boards. The host synthesizes replies for
+    // virtualized boards when the chain reaches their token.
+    for (size_t i = 0; i < switchBoards.size(); ++i) {
+      const uint8_t current = switchBoards[i];
+      if (!m_pRS485Comm->IsBoardPresent(current)) {
+        continue;
+      }
+
+      const uint8_t next = (i + 1 < switchBoards.size())
+                               ? switchBoards[i + 1]
                                : ppuc::v2::kNoBoard;
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
