@@ -21,6 +21,9 @@
 
 #include "PPUC_structs.h"
 #include "yaml-cpp/yaml.h"
+
+#include <set>
+
 class RS485Comm;
 
 class PPUCAPI PPUC {
@@ -34,6 +37,8 @@ class PPUCAPI PPUC {
   void LoadConfiguration(const char* configFile);
   void SetDebug(bool debug);
   void SetDebugErrors(bool debugErrors);
+  void SetSkippedBoardsCsv(const char* skippedBoardsCsv);
+  void SetSwitchReplyDelayUs(uint32_t delayUs);
   bool GetDebug();
   void SetRom(const char* rom);
   const char* GetRom();
@@ -47,11 +52,6 @@ class PPUCAPI PPUC {
   void SetSolenoidState(int number, int state);
   void SetLampState(int number, int state);
   void SetGIState(int string, int brightness);
-  void SetSwitchState(int number, int state);
-  bool IsSwitchVirtualized(int number);
-  void SetSkippedBoardsCsv(const char* boardsCsv);
-  void SetVirtualSwitchChainEnabled(bool enabled);
-  bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
@@ -82,7 +82,8 @@ class PPUCAPI PPUC {
   uint8_t m_platform;
   uint8_t m_coinDoorClosedSwitch;
   uint8_t m_gameOnSolenoid;
-  bool m_virtualSwitchChainEnabled = true;
+  uint32_t m_switchReplyDelayUs = 0;
+  std::set<uint8_t> m_skippedBoards;
 
   void SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
                               uint8_t board, uint32_t port);
