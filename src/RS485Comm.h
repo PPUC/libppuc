@@ -4,10 +4,12 @@
 #include <stdarg.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <queue>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -25,7 +27,7 @@
 
 #define RS485_COMM_BAUD_RATE 115200
 #define RS485_COMM_SERIAL_READ_TIMEOUT 5
-#define RS485_COMM_SERIAL_WRITE_TIMEOUT 4
+#define RS485_COMM_SERIAL_WRITE_TIMEOUT 20
 
 #define RS485_COMM_MAX_BOARDS 8
 
@@ -38,7 +40,18 @@
 #endif
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
-#define RS485_COMM_MAX_EVENTS_TO_SEND 32
+#define RS485_COMM_SWITCH_POLL_INTERVAL_MS 3
+#define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
+#define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 10
+#define RS485_COMM_RESYNC_COOLDOWN_MS 5000
+#define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
+#define RS485_COMM_CONFIG_ACK_RETRIES 3
+
+struct VirtualSwitchBoardState {
+  uint8_t board = ppuc::v2::kNoBoard;
+  std::vector<uint16_t> switchNumbers;
+  std::vector<uint8_t> switchStates;
+};
 
 class RS485Comm {
  public:
@@ -62,26 +75,37 @@ class RS485Comm {
                    const std::vector<uint16_t>& lamps,
                    const std::vector<uint16_t>& switches);
   bool SendMappingFrames();
+  void SetConfiguredBoards(const std::vector<uint8_t>& boards);
+  void SetSwitchNumbersByBoard(
+      const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
+  void FinalizeConfiguredBoardPresence();
+  bool IsBoardPresent(uint8_t board) const;
+  void SetActiveSwitchBoards(const std::vector<uint8_t>& boards);
 
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
+  bool SetVirtualSwitchState(uint16_t number, uint8_t state);
+  bool IsSwitchVirtualized(uint16_t number) const;
 
   void SetDebug(bool debug);
+  void SetDebugErrors(bool debugErrors);
 
  private:
   void LogMessage(const char* format, ...);
 
-  bool SendEvent(Event* event);
-  Event* receiveEvent();
-  void PollEvents(int board);
   bool ResyncSession();
   bool SendOutputStateFrame(uint8_t nextBoard);
+  bool ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
+                        uint8_t key);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState);
   void ReceiveSwitchStateChain(uint8_t firstBoard);
   void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
+  void EnsureConfiguredBoardPresenceKnown();
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
+  void DebugPrintf(const char* format, ...);
+  void ErrorPrintf(const char* format, ...);
 
   PPUC_LogMessageCallback m_logMessageCallback = nullptr;
   const void* m_logMessageUserData = nullptr;
@@ -89,9 +113,14 @@ class RS485Comm {
   uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
   uint8_t m_switchBoardCounter = 0;  // Number of registered switch boards.
   uint8_t m_switchBoardIndex = 0;
-  bool m_activeBoards[RS485_COMM_MAX_BOARDS] = {false};
+  std::vector<uint8_t> m_configuredBoards;
+  std::set<uint8_t> m_presentBoards;
+  std::unordered_map<uint8_t, std::vector<uint16_t>> m_switchNumbersByBoard;
+  std::unordered_map<uint8_t, VirtualSwitchBoardState> m_virtualSwitchBoards;
+  std::unordered_map<uint16_t, uint8_t> m_virtualSwitchOwnerByNumber;
 
   bool m_debug = false;
+  bool m_debugErrors = false;
   bool m_runtimeEnabled = true;
   uint8_t m_sequence = 0;
   uint8_t m_epoch = 1;
@@ -111,18 +140,15 @@ class RS485Comm {
   uint8_t m_giLevels[ppuc::v2::kGiStrings] = {0};
   uint8_t m_switchBitmap[ppuc::v2::kMaxSwitchBytes] = {0};
 
-  // Event message buffers, we need two independent for events and config events
-  // because of threading.
-  uint8_t m_msg[7];
-  uint8_t m_cmsg[12];
-
   struct sp_port* m_pSerialPort;
   struct sp_port_config* m_pSerialPortConfig;
   std::thread* m_pThread;
-  std::queue<Event*> m_events;
   std::queue<PPUCSwitchState*> m_switches;
-  std::mutex m_eventQueueMutex;
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};
+  std::chrono::steady_clock::time_point m_nextOutputFrameAt;
+  std::chrono::steady_clock::time_point m_nextSwitchPollAt;
+  std::chrono::steady_clock::time_point m_nextAllowedResyncAt;
+  bool m_boardPresenceFinalized = false;
 };

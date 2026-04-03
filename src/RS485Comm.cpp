@@ -90,6 +90,9 @@ RS485Comm::RS485Comm() {
   m_pSerialPort = NULL;
   m_pSerialPortConfig = NULL;
   m_runtimeConfig = ppuc::v2::RuntimeConfig();
+  m_nextOutputFrameAt = std::chrono::steady_clock::now();
+  m_nextSwitchPollAt = std::chrono::steady_clock::now();
+  m_nextAllowedResyncAt = std::chrono::steady_clock::now();
 }
 
 RS485Comm::~RS485Comm() {
@@ -120,32 +123,86 @@ void RS485Comm::LogMessage(const char* format, ...) {
 
 void RS485Comm::SetDebug(bool debug) { m_debug = debug; }
 
+void RS485Comm::SetDebugErrors(bool debugErrors) {
+  m_debugErrors = debugErrors;
+}
+
+void RS485Comm::DebugPrintf(const char* format, ...) {
+  if (!m_debug) {
+    return;
+  }
+
+  char buffer[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
+
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+  printf("%lld DEBUG: %s", static_cast<long long>(now), buffer);
+  if (buffer[0] == '\0' || buffer[strlen(buffer) - 1] != '\n') {
+    printf("\n");
+  }
+}
+
+void RS485Comm::ErrorPrintf(const char* format, ...) {
+  if (!(m_debug || m_debugErrors)) {
+    return;
+  }
+
+  char buffer[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
+
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+  printf("%lld ERROR: %s", static_cast<long long>(now), buffer);
+  if (buffer[0] == '\0' || buffer[strlen(buffer) - 1] != '\n') {
+    printf("\n");
+  }
+}
+
 bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
                            size_t size) {
   if (m_pSerialPort == NULL) {
     return false;
   }
 
-  const int written = sp_blocking_write(m_pSerialPort, buffer, size,
-                                        RS485_COMM_SERIAL_WRITE_TIMEOUT);
-  if (written == static_cast<int>(size)) {
-    return true;
-  }
+  for (uint8_t attempt = 0; attempt < 2; ++attempt) {
+    const int written = sp_blocking_write(m_pSerialPort, buffer, size,
+                                          RS485_COMM_SERIAL_WRITE_TIMEOUT);
+    if (written == static_cast<int>(size)) {
+      return true;
+    }
 
-  if (m_debug) {
+    if (attempt == 0 && written >= 0) {
+      // USB-RS485 adapters occasionally fail to accept a short write burst in
+      // time even though the link recovers immediately afterward. Give the
+      // host driver one brief retry before treating it as a transport error.
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      continue;
+    }
+
     if (written < 0) {
       char* errorMessage = sp_last_error_message();
       if (errorMessage) {
-        printf("Serial write failed for %s: %s\n", context, errorMessage);
+        ErrorPrintf("Serial write failed for %s: %s", context, errorMessage);
         sp_free_error_message(errorMessage);
       } else {
-        printf("Serial write failed for %s: libserialport error %d\n", context,
-               written);
+        ErrorPrintf("Serial write failed for %s: libserialport error %d",
+                    context, written);
       }
     } else {
-      printf("Serial write incomplete for %s: wrote %d of %zu bytes\n", context,
-             written, size);
+      ErrorPrintf("Serial write incomplete for %s: wrote %d of %zu bytes",
+                  context, written, size);
     }
+
+    return false;
   }
 
   return false;
@@ -153,41 +210,39 @@ bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
 
 void RS485Comm::Run() {
   m_stopRequested = false;
+  m_nextOutputFrameAt = std::chrono::steady_clock::now();
+  m_nextSwitchPollAt = std::chrono::steady_clock::now();
+  m_nextAllowedResyncAt = std::chrono::steady_clock::now();
   m_pThread = new std::thread([this]() {
     LogMessage("RS485Comm run thread starting");
 
     while (!m_stopRequested) {
-      uint8_t eventsSent = 0;
-      while (eventsSent++ < RS485_COMM_MAX_EVENTS_TO_SEND) {
-        Event* event = nullptr;
-        m_eventQueueMutex.lock();
-        if (!m_events.empty()) {
-          event = m_events.front();
-          m_events.pop();
-        }
-        m_eventQueueMutex.unlock();
-        if (!event) {
-          break;
-        }
-        SendEvent(event);
-        delete event;
-      }
-
       if (!m_runtimeEnabled) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         continue;
       }
 
-      if (m_needSessionResync) {
+      if (m_needSessionResync &&
+          std::chrono::steady_clock::now() >= m_nextAllowedResyncAt) {
         if (!ResyncSession()) {
           std::this_thread::sleep_for(std::chrono::milliseconds(10));
           continue;
         }
       }
 
+      auto now = std::chrono::steady_clock::now();
+      if (now < m_nextOutputFrameAt) {
+        std::this_thread::sleep_until(m_nextOutputFrameAt);
+        now = std::chrono::steady_clock::now();
+      }
+      m_nextOutputFrameAt =
+          now + std::chrono::milliseconds(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS);
+
       uint8_t nextBoard = ppuc::v2::kNoBoard;
-      if (m_switchBoardCounter > 0) {
+      if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
         nextBoard = m_switchBoards[0];
+        m_nextSwitchPollAt =
+            now + std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_INTERVAL_MS);
       }
 
       SendOutputStateFrame(nextBoard);
@@ -249,8 +304,7 @@ void RS485Comm::QueueEvent(Event* event) {
       return;
   }
 
-  std::lock_guard<std::mutex> lock(m_eventQueueMutex);
-  m_events.push(event);
+  delete event;
 }
 
 void RS485Comm::Disconnect() {
@@ -405,6 +459,15 @@ void RS485Comm::RegisterSwitchBoard(uint8_t number) {
   }
 }
 
+void RS485Comm::SetConfiguredBoards(const std::vector<uint8_t>& boards) {
+  m_configuredBoards = boards;
+}
+
+void RS485Comm::SetSwitchNumbersByBoard(
+    const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard) {
+  m_switchNumbersByBoard = switchesByBoard;
+}
+
 void RS485Comm::SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config) {
   if (ppuc::v2::IsValidRuntimeConfig(config)) {
     m_runtimeConfig = config;
@@ -447,6 +510,61 @@ PPUCSwitchState* RS485Comm::GetNextSwitchState() {
   return switchState;
 }
 
+bool RS485Comm::SetVirtualSwitchState(uint16_t number, uint8_t state) {
+  EnsureConfiguredBoardPresenceKnown();
+
+  const auto owner = m_virtualSwitchOwnerByNumber.find(number);
+  if (owner == m_virtualSwitchOwnerByNumber.end()) {
+    return false;
+  }
+
+  auto boardIt = m_virtualSwitchBoards.find(owner->second);
+  if (boardIt == m_virtualSwitchBoards.end()) {
+    return false;
+  }
+
+  auto& boardState = boardIt->second;
+  for (size_t i = 0; i < boardState.switchNumbers.size(); ++i) {
+    if (boardState.switchNumbers[i] != number) {
+      continue;
+    }
+
+    const uint8_t normalizedState = state == 0 ? 0 : 1;
+    if (boardState.switchStates[i] == normalizedState) {
+      return true;
+    }
+
+    boardState.switchStates[i] = normalizedState;
+    {
+      std::lock_guard<std::mutex> lock(m_switchesQueueMutex);
+      m_switches.push(new PPUCSwitchState(number, normalizedState));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::IsSwitchVirtualized(uint16_t number) const {
+  const_cast<RS485Comm*>(this)->EnsureConfiguredBoardPresenceKnown();
+  return m_virtualSwitchOwnerByNumber.find(number) !=
+         m_virtualSwitchOwnerByNumber.end();
+}
+
+bool RS485Comm::IsBoardPresent(uint8_t board) const {
+  return m_presentBoards.find(board) != m_presentBoards.end();
+}
+
+void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
+  m_switchBoardCounter = 0;
+  for (const uint8_t board : boards) {
+    if (m_switchBoardCounter >= RS485_COMM_MAX_BOARDS || board >= RS485_COMM_MAX_BOARDS) {
+      break;
+    }
+    m_switchBoards[m_switchBoardCounter++] = board;
+  }
+}
+
 bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
   // Wait a bit to not exceed the output buffer in case of large configurations.
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -478,14 +596,30 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
 
   delete event;
 
-  if (WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
-    if (m_debug) {
-      printf("Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u\n",
-             buffer[5], buffer[6], buffer[7], buffer[8], buffer[3]);
+  for (uint8_t attempt = 0; attempt < RS485_COMM_CONFIG_ACK_RETRIES; ++attempt) {
+    if (!WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
+      return false;
     }
-    return true;
+
+    if (m_debug) {
+      DebugPrintf(
+          "Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u attempt=%u",
+          buffer[5], buffer[6], buffer[7], buffer[8], buffer[3],
+          static_cast<unsigned>(attempt + 1));
+    }
+
+    if (ReceiveConfigAck(buffer[5], buffer[6], buffer[7], buffer[8])) {
+      m_presentBoards.insert(buffer[5]);
+      return true;
+    }
+
+    sp_flush(m_pSerialPort, SP_BUF_INPUT);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 
+  fprintf(stderr,
+          "ERROR: Config not acknowledged: board=%u topic=%u index=%u key=%u\n",
+          buffer[5], buffer[6], buffer[7], buffer[8]);
   return false;
 }
 
@@ -515,9 +649,9 @@ bool RS485Comm::SendSetupFrame() {
 
   if (WriteBytes("SetupFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
-      printf("Sent V2 SetupFrame coil=%u lamp=%u switch=%u seq=%u\n",
-             m_runtimeConfig.coilBits, m_runtimeConfig.lampBits,
-             m_runtimeConfig.switchBits, buffer[3]);
+      DebugPrintf("Sent V2 SetupFrame coil=%u lamp=%u switch=%u seq=%u",
+                  m_runtimeConfig.coilBits, m_runtimeConfig.lampBits,
+                  m_runtimeConfig.switchBits, buffer[3]);
     }
     return true;
   }
@@ -544,10 +678,11 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
     m_switchReplyMisses = 0;
   } else {
     ++m_switchReplyMisses;
-    if (m_debug) {
-      printf("Missed V2 switch reply chain %u time(s)\n", m_switchReplyMisses);
+    if (m_debug || m_debugErrors) {
+      ErrorPrintf("Missed V2 switch reply chain %u time(s)",
+                  m_switchReplyMisses);
     }
-    if (m_switchReplyMisses >= 3) {
+    if (m_switchReplyMisses >= RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD) {
       m_needSessionResync = true;
     }
   }
@@ -555,8 +690,8 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
 
 bool RS485Comm::ResyncSession() {
   ++m_epoch;
-  if (m_debug) {
-    printf("Starting V2 session resync epoch=%u\n", m_epoch);
+  if (m_debug || m_debugErrors) {
+    ErrorPrintf("Starting V2 session resync epoch=%u", m_epoch);
   }
   if (!SendSetupFrame()) {
     return false;
@@ -569,8 +704,70 @@ bool RS485Comm::ResyncSession() {
   // epoch before the runtime loop starts polling again.
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  m_switchReplyMisses = 0;
+  m_nextAllowedResyncAt =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(RS485_COMM_RESYNC_COOLDOWN_MS);
   m_needSessionResync = false;
   return true;
+}
+
+void RS485Comm::EnsureConfiguredBoardPresenceKnown() {
+  if (m_boardPresenceFinalized) {
+    return;
+  }
+
+  FinalizeConfiguredBoardPresence();
+}
+
+void RS485Comm::FinalizeConfiguredBoardPresence() {
+  if (m_boardPresenceFinalized) {
+    return;
+  }
+
+  printf("Configured boards:");
+  if (m_configuredBoards.empty()) {
+    printf(" none\n");
+  } else {
+    for (const uint8_t board : m_configuredBoards) {
+      printf(" %u", board);
+    }
+    printf("\n");
+  }
+
+  m_virtualSwitchBoards.clear();
+  m_virtualSwitchOwnerByNumber.clear();
+
+  for (const uint8_t board : m_configuredBoards) {
+    if (m_presentBoards.find(board) != m_presentBoards.end()) {
+      printf("Board %u found.\n", board);
+      continue;
+    }
+
+    VirtualSwitchBoardState boardState;
+    boardState.board = board;
+    const auto switches = m_switchNumbersByBoard.find(board);
+    if (switches != m_switchNumbersByBoard.end()) {
+      boardState.switchNumbers = switches->second;
+      // Virtual switches start open until explicitly driven by the host.
+      boardState.switchStates.assign(boardState.switchNumbers.size(), 0);
+      for (const uint16_t switchNumber : boardState.switchNumbers) {
+        m_virtualSwitchOwnerByNumber[switchNumber] = board;
+      }
+    }
+    m_virtualSwitchBoards[board] = boardState;
+    printf("Board %u missing; virtualized with %zu switch(es).\n", board,
+           boardState.switchNumbers.size());
+  }
+
+  if (m_debug || m_debugErrors) {
+    for (const auto& [board, state] : m_virtualSwitchBoards) {
+      ErrorPrintf("Virtualized missing board %u with %zu switch(es)", board,
+                  state.switchNumbers.size());
+    }
+  }
+
+  m_boardPresenceFinalized = true;
 }
 
 bool RS485Comm::SendResetFrame() {
@@ -591,7 +788,7 @@ bool RS485Comm::SendResetFrame() {
 
   if (WriteBytes("ResetFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
-      printf("Sent V2 ResetFrame seq=%u\n", buffer[3]);
+      DebugPrintf("Sent V2 ResetFrame seq=%u", buffer[3]);
     }
     return true;
   }
@@ -694,6 +891,101 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
   return WriteBytes("OutputStateFrame", buffer, frameBytes);
 }
 
+bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
+                                 uint8_t key) {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  uint8_t header[ppuc::v2::kHeaderBytes];
+  uint8_t buffer[ppuc::v2::kConfigAckFrameBytes];
+  auto start = std::chrono::steady_clock::now();
+
+  while ((std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - start))
+             .count() < RS485_COMM_CONFIG_ACK_TIMEOUT_US) {
+    if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
+      continue;
+    }
+
+    sp_blocking_read(m_pSerialPort, &header[0], 1,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (header[0] != ppuc::v2::kSyncByte) {
+      continue;
+    }
+
+    sp_blocking_read(m_pSerialPort, &header[1], ppuc::v2::kHeaderBytes - 1,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+    const ppuc::v2::FrameType frameType = ppuc::v2::ExtractType(header[1]);
+    if (frameType != ppuc::v2::kFrameConfigAck) {
+      size_t payloadBytes = 0;
+      switch (frameType) {
+        case ppuc::v2::kFrameSetup:
+          payloadBytes = ppuc::v2::kSetupPayloadBytes;
+          break;
+        case ppuc::v2::kFrameMapping:
+          payloadBytes = ppuc::v2::kMappingPayloadBytes;
+          break;
+        case ppuc::v2::kFrameConfig:
+          payloadBytes = ppuc::v2::kConfigPayloadBytes;
+          break;
+        case ppuc::v2::kFrameReset:
+        case ppuc::v2::kFrameHeartbeat:
+        case ppuc::v2::kFrameError:
+          payloadBytes = 0;
+          break;
+        default:
+          return false;
+      }
+
+      uint8_t discard[ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes +
+                      ppuc::v2::kCrcBytes];
+      if (payloadBytes + ppuc::v2::kCrcBytes > sizeof(discard)) {
+        return false;
+      }
+      sp_blocking_read(m_pSerialPort, discard, payloadBytes + ppuc::v2::kCrcBytes,
+                       RS485_COMM_SERIAL_READ_TIMEOUT);
+      continue;
+    }
+
+    memcpy(buffer, header, ppuc::v2::kHeaderBytes);
+    sp_blocking_read(m_pSerialPort, &buffer[ppuc::v2::kHeaderBytes],
+                     ppuc::v2::kConfigAckPayloadBytes + ppuc::v2::kCrcBytes,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+
+    const uint16_t receivedCrc =
+        (static_cast<uint16_t>(buffer[ppuc::v2::kConfigAckFrameBytes - 2]) << 8) |
+        static_cast<uint16_t>(buffer[ppuc::v2::kConfigAckFrameBytes - 1]);
+    const uint16_t calculatedCrc = ppuc::v2::Crc16Ccitt(
+        buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigAckPayloadBytes);
+    if (receivedCrc != calculatedCrc) {
+      ErrorPrintf("Invalid V2 config ack CRC: got=%04X expected=%04X",
+                  receivedCrc, calculatedCrc);
+      return false;
+    }
+
+    if (buffer[5] != boardId || buffer[6] != topic || buffer[7] != index ||
+        buffer[8] != key) {
+      ErrorPrintf("Unexpected V2 config ack: board=%u topic=%u index=%u key=%u",
+                  buffer[5], buffer[6], buffer[7], buffer[8]);
+      continue;
+    }
+
+    if (buffer[9] != ppuc::v2::kConfigAckAccepted) {
+      ErrorPrintf(
+          "Rejected V2 config ack: board=%u topic=%u index=%u key=%u status=%u",
+          boardId, topic, index, key, buffer[9]);
+      return false;
+    }
+
+    return true;
+  }
+
+  ErrorPrintf("Timed out waiting for V2 config ack: board=%u topic=%u index=%u key=%u",
+              boardId, topic, index, key);
+  return false;
+}
+
 void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
   for (uint16_t n = 0; n < m_runtimeConfig.switchBits; ++n) {
     const bool oldState = ppuc::v2::GetBitmapBit(m_switchBitmap, n);
@@ -750,8 +1042,8 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
         *outHadState = true;
       }
       if (m_debug) {
-        printf("Received V2 switch state frame for board token %u\n",
-               expectedBoard);
+        DebugPrintf("Received V2 switch state frame for board token %u",
+                    expectedBoard);
       }
     } else if (frameType == ppuc::v2::kFrameSwitchNoChange) {
       payloadBytes = ppuc::v2::SwitchNoChangePayloadBytes();
@@ -759,13 +1051,14 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
         *outHadState = false;
       }
       if (m_debug) {
-        printf("Received V2 switch no-change frame for board token %u\n",
-               expectedBoard);
+        DebugPrintf("Received V2 switch no-change frame for board token %u",
+                    expectedBoard);
       }
     } else {
       if (m_debug) {
-        printf("Ignoring unexpected V2 frame type 0x%02X while waiting for switch reply\n",
-               static_cast<unsigned>(frameType));
+        DebugPrintf(
+            "Ignoring unexpected V2 frame type 0x%02X while waiting for switch reply",
+            static_cast<unsigned>(frameType));
       }
       continue;
     }
@@ -784,27 +1077,28 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     const uint8_t statusFlags = buffer[ppuc::v2::kHeaderBytes + 2];
 
     if (epochSeen != m_epoch) {
-      if (m_debug) {
-        printf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u\n",
-               expectedBoard, epochSeen, m_epoch);
+      if (m_debug || m_debugErrors) {
+        ErrorPrintf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
+                    expectedBoard, epochSeen, m_epoch);
       }
-      m_needSessionResync = true;
+      return false;
     }
     if (lastHostSequenceSeen != m_lastOutputSequenceSent) {
-      if (m_debug) {
-        printf("V2 switch reply sequence mismatch: board=%u seen=%u expected=%u\n",
-               expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
+      if (m_debug || m_debugErrors) {
+        ErrorPrintf(
+            "V2 switch reply sequence mismatch: board=%u seen=%u expected=%u",
+            expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
       }
-      m_needSessionResync = true;
+      return false;
     }
     if ((statusFlags & (ppuc::v2::kStatusNeedsSetup |
                         ppuc::v2::kStatusMappingIncomplete |
                         ppuc::v2::kStatusSequenceGap)) != 0) {
-      if (m_debug) {
-        printf("V2 switch reply requested resync: board=%u flags=0x%02X\n",
-               expectedBoard, statusFlags);
+      if (m_debug || m_debugErrors) {
+        ErrorPrintf("V2 switch reply requested resync: board=%u flags=0x%02X",
+                    expectedBoard, statusFlags);
       }
-      m_needSessionResync = true;
+      return false;
     }
 
     const size_t frameBytes =
@@ -815,9 +1109,9 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     const uint16_t calculatedCrc =
         ppuc::v2::Crc16Ccitt(buffer, frameBytes - ppuc::v2::kCrcBytes);
     if (receivedCrc != calculatedCrc) {
-      if (m_debug) {
-        printf("Invalid V2 switch frame CRC: got=%04X expected=%04X\n",
-               receivedCrc, calculatedCrc);
+      if (m_debug || m_debugErrors) {
+        ErrorPrintf("Invalid V2 switch frame CRC: got=%04X expected=%04X",
+                    receivedCrc, calculatedCrc);
       }
       return false;
     }
@@ -827,191 +1121,17 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
           &buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes],
           switchBytes);
       if (m_debug) {
-        printf("Applied V2 switch bitmap diff for board token %u\n",
-               expectedBoard);
+        DebugPrintf("Applied V2 switch bitmap diff for board token %u",
+                    expectedBoard);
       }
     }
     return true;
   }
 
-  if (m_debug) {
-    printf("Timed out waiting for V2 switch reply for board token %u\n",
-           expectedBoard);
+  if (m_debug || m_debugErrors) {
+    ErrorPrintf("Timed out waiting for V2 switch reply for board token %u",
+                expectedBoard);
   }
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
   return false;
-}
-
-bool RS485Comm::SendEvent(Event* event) {
-  if (m_pSerialPort != NULL) {
-    m_msg[0] = (uint8_t)255;
-    m_msg[1] = event->sourceId;
-    m_msg[2] = event->eventId >> 8;
-    m_msg[3] = event->eventId & 0xff;
-    m_msg[4] = event->value;
-    m_msg[5] = 0b10101010;
-    m_msg[6] = 0b01010101;
-
-    if (WriteBytes("LegacyEvent", m_msg, sizeof(m_msg))) {
-      if (m_debug) {
-        // @todo use logger
-        printf("Sent Event %d %d %d\n", event->sourceId, event->eventId,
-               event->value);
-      }
-      return true;
-    }
-  }
-
-  return false;
-}
-
-Event* RS485Comm::receiveEvent() {
-  if (m_pSerialPort != NULL) {
-    std::chrono::steady_clock::time_point start =
-        std::chrono::steady_clock::now();
-
-    // Set a timeout of 8ms when waiting for an I/O board event.
-    // The RS485 converter on the board itself requires 1ms to toggle
-    // send/receive mode.
-    while ((std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - start))
-               .count() < 8000) {
-      // printf("Available %d\n", m_serialPort.Available());
-      if ((int)sp_input_waiting(m_pSerialPort) >= 6) {
-        uint8_t startByte;
-        sp_blocking_read(m_pSerialPort, &startByte, 1,
-                         RS485_COMM_SERIAL_READ_TIMEOUT);
-        if (startByte == 255) {
-          uint8_t sourceId;
-          sp_blocking_read(m_pSerialPort, &sourceId, 1,
-                           RS485_COMM_SERIAL_READ_TIMEOUT);
-          if (sourceId != 0) {
-            uint8_t eventIdHigh;
-            uint8_t eventIdLow;
-            sp_blocking_read(m_pSerialPort, &eventIdHigh, 1,
-                             RS485_COMM_SERIAL_READ_TIMEOUT);
-            sp_blocking_read(m_pSerialPort, &eventIdLow, 1,
-                             RS485_COMM_SERIAL_READ_TIMEOUT);
-            uint16_t eventId = (((uint16_t)eventIdHigh) << 8) + eventIdLow;
-            if (eventId != 0) {
-              uint8_t value;
-              sp_blocking_read(m_pSerialPort, &value, 1,
-                               RS485_COMM_SERIAL_READ_TIMEOUT);
-
-              uint8_t stopByte;
-              sp_blocking_read(m_pSerialPort, &stopByte, 1,
-                               RS485_COMM_SERIAL_READ_TIMEOUT);
-              if (stopByte == 0b10101010) {
-                sp_blocking_read(m_pSerialPort, &stopByte, 1,
-                                 RS485_COMM_SERIAL_READ_TIMEOUT);
-                if (stopByte == 0b01010101) {
-                  if (m_debug) {
-                    // @todo use logger
-                    printf("Received Event %d %d %d\n", sourceId, eventId,
-                           value);
-                  }
-                  return new Event(sourceId, eventId, value);
-                } else if (m_debug) {
-                  // @todo use logger
-                  printf("Received wrong second stop byte %d\n", stopByte);
-                }
-              } else if (m_debug) {
-                // @todo use logger
-                printf("Received wrong first stop byte %d\n", stopByte);
-              }
-            } else if (m_debug) {
-              // @todo use logger
-              printf("Received illegal event id %d\n", eventId);
-            }
-          } else if (m_debug) {
-            // @todo use logger
-            printf("Received illegal source id %d\n", sourceId);
-          }
-
-          // Something went wrong after the start byte, try to get back in sync.
-          while (sp_input_waiting(m_pSerialPort) > 0) {
-            if (m_debug) {
-              // @todo use logger
-              printf("Error: Lost sync, %d bytes remaining\n",
-                     sp_input_waiting(m_pSerialPort));
-            }
-            uint8_t stopByte;
-            sp_blocking_read(m_pSerialPort, &stopByte, 1,
-                             RS485_COMM_SERIAL_READ_TIMEOUT);
-            if (stopByte == 0b10101010) {
-              sp_blocking_read(m_pSerialPort, &stopByte, 1,
-                               RS485_COMM_SERIAL_READ_TIMEOUT);
-              if (stopByte == 0b01010101) {
-                // Now we should be back in sync.
-                break;
-              }
-            }
-          }
-        }
-      }
-    }
-    if (m_debug) {
-      // @todo use logger
-      printf("Timeout when waiting for events from i/o boards\n");
-    }
-  } else if (m_debug) {
-    // @todo use logger
-    printf("RS485 Error\n");
-  }
-
-  return nullptr;
-}
-
-void RS485Comm::PollEvents(int board) {
-  if (m_debug) {
-    // @todo use logger
-    printf("Polling board %d ...\n", board);
-  }
-
-  Event* event = new Event(EVENT_POLL_EVENTS, 1, board);
-  if (SendEvent(event)) {
-    delete event;
-    // Wait until the i/o board switched to RS485 send mode.
-    std::this_thread::sleep_for(
-        std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
-
-    bool null_event = false;
-    Event* event_recv;
-    while (!null_event && (event_recv = receiveEvent())) {
-      switch (event_recv->sourceId) {
-        case EVENT_PONG:
-          if ((int)event_recv->value < RS485_COMM_MAX_BOARDS) {
-            m_activeBoards[(int)event_recv->value] = true;
-            if (m_debug) {
-              // @todo user logger
-              printf("Found i/o board %d\n", (int)event_recv->value);
-            }
-          }
-          break;
-
-        case EVENT_NULL:
-          null_event = true;
-          break;
-
-        case EVENT_SOURCE_SWITCH:
-          m_switchesQueueMutex.lock();
-          m_switches.push(
-              new PPUCSwitchState(event_recv->eventId, event_recv->value));
-          m_switchesQueueMutex.unlock();
-          break;
-
-        default:
-          // @todo handle events like error reports, broken coils, ...
-          break;
-      }
-
-      delete event_recv;
-    }
-
-    // Wait until the i/o board switched back to RS485 receive mode.
-    std::this_thread::sleep_for(
-        std::chrono::microseconds(RS485_MODE_SWITCH_DELAY));
-  } else {
-    delete event;
-  }
 }

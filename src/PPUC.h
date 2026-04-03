@@ -34,6 +34,7 @@ class PPUCAPI PPUC {
 
   void LoadConfiguration(const char* configFile);
   void SetDebug(bool debug);
+  void SetDebugErrors(bool debugErrors);
   bool GetDebug();
   void SetRom(const char* rom);
   const char* GetRom();
@@ -47,6 +48,8 @@ class PPUCAPI PPUC {
   void SetSolenoidState(int number, int state);
   void SetLampState(int number, int state);
   void SetGIState(int string, int brightness);
+  void SetSwitchState(int number, int state);
+  bool IsSwitchVirtualized(int number);
   PPUCSwitchState* GetNextSwitchState();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };

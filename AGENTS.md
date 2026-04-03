@@ -212,6 +212,29 @@ Current transport-tuning points to remember in `RS485Comm`:
 - switch-reply receive window in `ReceiveSwitchStateFrame()`
 - stale-input flush after a missed switch-reply chain
 - miss-count threshold before `m_needSessionResync = true`
+- output-frame pacing in the runtime loop
+- serial write timeout / short-write retry behavior
+
+## Current Freeze Status
+
+- Long-run attract-mode testing is still not robust.
+- One run may work for several minutes, while another can freeze in under a minute.
+- The visible freeze still correlates with missed switch-reply chains and the host recovery path.
+- Host timing changes clearly affect the symptom, but that does not prove the root cause is host-only.
+- Treat firmware as still in scope, especially the board-side switch reply path and token forwarding behavior.
+
+## Virtual Board Implementation Notes
+
+- First implementation slice is host-side only.
+- `libppuc` now tracks configured boards and switch ownership by board from YAML.
+- Board presence is now determined by explicit firmware-backed `ConfigAck` responses during startup config transmission.
+- Every `ConfigFrame` must be acknowledged by the addressed board.
+- Missing configured boards become host-side virtual boards if they do not acknowledge config during startup.
+- Config frames that are not acknowledged are printed as startup errors with board/topic/index/key details.
+- All switches owned by a virtual board are initialized to `open`.
+- Host-side switch injection is now limited to switches owned by virtualized boards.
+- This is the intended basis for bench setups where the cabinet board is absent.
+- Current limitation: virtual switch boards are not yet full synthetic participants in the runtime switch-reply cycle, and host-side virtual switch updates are not yet pushed into board-local high-power gating logic.
 
 ## Next Bring-Up Focus
 
