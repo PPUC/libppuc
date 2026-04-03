@@ -21,7 +21,6 @@
 
 #include "PPUC_structs.h"
 #include "yaml-cpp/yaml.h"
-
 class RS485Comm;
 
 class PPUCAPI PPUC {
@@ -50,6 +49,8 @@ class PPUCAPI PPUC {
   void SetGIState(int string, int brightness);
   void SetSwitchState(int number, int state);
   bool IsSwitchVirtualized(int number);
+  void SetSkippedBoardsCsv(const char* boardsCsv);
+  bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };

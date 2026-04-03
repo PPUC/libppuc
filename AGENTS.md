@@ -42,8 +42,8 @@ Build instructions in `README.md` are platform-specific and use CMake.
   - field endianness
   - token-ring switch polling
   - runtime bitmap sizing and mappings
-- Preserve the current compatibility model: host APIs still expose legacy event-like concepts while transport is bitmap-based on `v2`.
-- `RS485Comm` still contains legacy event support for bootstrap/probing paths. Avoid deleting that unless both repos are migrated together.
+- Preserve the current compatibility model: host APIs still expose legacy event-like concepts while RS485 transport is bitmap-based on `v2`.
+- Internal legacy `Event` objects still exist in `libppuc`, but legacy RS485 event packets are no longer part of the wire protocol.
 
 ## V2 Host Protocol
 
@@ -85,23 +85,18 @@ The effective `v2` startup flow in `PPUC::Connect()` is:
 1. Open serial port through `RS485Comm::Connect()`.
 2. Flush the port and send `ResetFrame`.
 3. Wait for board reset grace period.
-4. Send legacy bootstrap traffic:
-   - `EVENT_NULL`
-   - empty `ConfigEvent(board)`
-   - `EVENT_NULL`
-   - repeated twice for all possible boards
-5. Send legacy `EVENT_PING` and poll each board with legacy `EVENT_POLL_EVENTS`.
-6. Parse YAML config and emit `ConfigFrame`s for platform, switches, switch matrix, PWM outputs, LEDs, effects, and trigger rules.
-7. Register switch-capable boards and send `CONFIG_TOPIC_SWITCH_CHAIN` to define token handoff.
-8. Derive dense coil/lamp/switch mappings from configured logical numbers.
-9. Send `SetupFrame`.
-10. Wait 20 ms.
-11. Send all `MappingFrame`s.
-12. Wait 1 s.
-13. Queue initial GI and `EVENT_READ_SWITCHES`.
-14. Start `RS485Comm::Run()` background loop.
+4. Parse YAML config and emit `ConfigFrame`s for platform, switches, switch matrix, PWM outputs, LEDs, effects, and trigger rules.
+5. Require addressed boards to acknowledge config with `ConfigAck`.
+6. Register switch-capable boards and send `CONFIG_TOPIC_SWITCH_CHAIN` to define token handoff only across present switch boards.
+7. Derive dense coil/lamp/switch mappings from configured logical numbers.
+8. Send `SetupFrame`.
+9. Wait 20 ms.
+10. Send all `MappingFrame`s.
+11. Wait 1 s.
+12. Queue initial GI.
+13. Start `RS485Comm::Run()` background loop.
 
-This mixed startup is intentional right now. Discovery/probing still uses legacy event packets, while steady-state output and switch transport use `v2`.
+Startup is now `v2`-only on the wire. Presence detection comes from `ConfigAck`, not legacy probe packets.
 
 ### Runtime Mapping Model
 
@@ -130,7 +125,6 @@ Design direction:
 
 `RS485Comm::Run()` is the steady-state transport loop.
 
-- It drains up to `RS485_COMM_MAX_EVENTS_TO_SEND` queued legacy events per iteration.
 - It converts lamp, GI, and solenoid events into local coil/lamp bitmap changes instead of sending them as discrete RS485 packets.
 - It sends one `OutputStateFrame` each iteration containing the full coil/lamp snapshot.
 - `header.nextBoard` is set to the first registered switch board, or `kNoBoard` if no switch boards exist.
@@ -174,27 +168,27 @@ Important current behavior:
 
 ### Legacy/V2 Boundary
 
-`v2` is not a full clean break yet.
+`v2` is now the only host-side RS485 wire protocol.
 
-- Legacy events are still used for:
-  - reset/bootstrap synchronization
-  - board probing
-  - some control signals like `EVENT_RUN`
+- Internal legacy-style `Event` objects still exist in `libppuc`.
 - `v2` frames are used for:
+  - reset
   - runtime setup
   - mappings
   - config transport
+  - config acknowledgment
   - output snapshots
   - switch-state return traffic
+  - host-driven virtual switch updates
 
-When modifying this area, keep both paths coherent unless the migration is explicitly being completed on both repos.
+When modifying transport behavior, prefer extending `v2` rather than reviving legacy RS485 packets.
 
 ## Known Risks
 
 - The runtime loop always restarts token polling from the first registered switch board on every output frame. That is the current design; if fairness or latency changes are needed, coordinate them with firmware.
 - `sequence` is transmitted but not validated for loss, duplicate detection, or synchronization.
 - `ReceiveSwitchStateFrame()` checks the reply chain by `nextBoard`, not by an explicit sender ID, because frames do not carry one.
-- The startup path still depends on legacy packets before `v2` steady-state begins.
+- Startup and steady-state transport are both `v2`-only on the wire.
 - `QueueEvent()` silently ignores lamp/coil numbers that are absent from the derived mappings.
 - GI uses fixed runtime slots rather than the dynamic mapping tables used for coils, lamps, and switches.
 
@@ -205,6 +199,9 @@ When modifying this area, keep both paths coherent unless the migration is expli
 - This means aggressive switch timeout/resync behavior can degrade normal output animation even when lamps still appear generally active.
 - Keep these timing values as part of the current known-good baseline unless testing proves a better set.
 - For future games with more switch boards, expect these values to need retuning. Treat them as transport tuning parameters, not protocol constants.
+- Latest real-machine result: Time Warp attract mode ran for `1h40m4s` with no communication error messages.
+- That run is the current best evidence that the present `libppuc` `v2` timing, config-ack startup, and output/switch polling balance are stable enough to treat as the new baseline.
+- Do not casually retune transport timing away from this point while working on unrelated features such as coil test or virtual-board behavior.
 
 Current transport-tuning points to remember in `RS485Comm`:
 
@@ -234,7 +231,10 @@ Current transport-tuning points to remember in `RS485Comm`:
 - All switches owned by a virtual board are initialized to `open`.
 - Host-side switch injection is now limited to switches owned by virtualized boards.
 - This is the intended basis for bench setups where the cabinet board is absent.
-- Current limitation: virtual switch boards are not yet full synthetic participants in the runtime switch-reply cycle, and host-side virtual switch updates are not yet pushed into board-local high-power gating logic.
+- Runtime switch polling now uses the full logical switch-board order, including missing boards.
+- Real boards are configured to hand off to the next logical board, even if that board is missing.
+- When the chain reaches a missing board token, `libppuc` now emits a normal `SwitchState` or `SwitchNoChange` frame on the RS485 bus on behalf of that virtual board and then hands over to the next logical board.
+- `libppuc` also supports a forced-virtual board set from `ppuc`, so test runs can skip specific configured boards immediately without waiting for presence detection.
 
 ## Next Bring-Up Focus
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 
 #include "Adafruit_NeoPixel.h"
@@ -652,21 +653,19 @@ bool PPUC::Connect() {
 
     m_pRS485Comm->FinalizeConfiguredBoardPresence();
 
-    std::vector<uint8_t> presentSwitchBoards;
-    for (const uint8_t board : switchBoards) {
-      if (m_pRS485Comm->IsBoardPresent(board)) {
-        presentSwitchBoards.push_back(board);
-      }
-    }
-    m_pRS485Comm->SetActiveSwitchBoards(presentSwitchBoards);
+    m_pRS485Comm->SetActiveSwitchBoards(switchBoards);
 
-    // Configure token-ring handoff only across boards that acknowledged
-    // configuration during startup.
-    for (size_t i = 0; i < presentSwitchBoards.size(); ++i) {
-      const uint8_t current = presentSwitchBoards[i];
-      const uint8_t next = (i + 1 < presentSwitchBoards.size())
-                               ? presentSwitchBoards[i + 1]
-                               : ppuc::v2::kNoBoard;
+    // Configure token-ring handoff across the full logical switch-board
+    // order, including missing boards. The host will synthesize replies for
+    // virtualized boards when the chain reaches their token.
+    for (size_t i = 0; i < switchBoards.size(); ++i) {
+      const uint8_t current = switchBoards[i];
+      if (!m_pRS485Comm->IsBoardPresent(current)) {
+        continue;
+      }
+
+      const uint8_t next =
+          (i + 1 < switchBoards.size()) ? switchBoards[i + 1] : ppuc::v2::kNoBoard;
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
           (uint8_t)CONFIG_TOPIC_NEXT_BOARD, next));
@@ -728,6 +727,29 @@ bool PPUC::IsSwitchVirtualized(int number) {
   return m_pRS485Comm->IsSwitchVirtualized(static_cast<uint16_t>(number));
 }
 
+void PPUC::SetSkippedBoardsCsv(const char* boardsCsv) {
+  std::set<uint8_t> boards;
+  if (boardsCsv && boardsCsv[0] != '\0') {
+    std::stringstream ss(boardsCsv);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+      if (item.empty()) {
+        continue;
+      }
+
+      const int board = atoi(item.c_str());
+      if (board >= 0 && board <= 255) {
+        boards.insert(static_cast<uint8_t>(board));
+      }
+    }
+  }
+  m_pRS485Comm->SetSkippedBoards(boards);
+}
+
+bool PPUC::IsBoardVirtualized(uint8_t board) {
+  return m_pRS485Comm->IsBoardVirtualized(board);
+}
+
 PPUCSwitchState* PPUC::GetNextSwitchState() {
   return m_pRS485Comm->GetNextSwitchState();
 }
@@ -777,6 +799,9 @@ void PPUC::CoilTest(uint8_t number) {
 
   for (const auto& coil : GetCoils()) {
     if (coil.type == PWM_TYPE_SOLENOID || coil.type == PWM_TYPE_FLASHER) {
+      if (IsBoardVirtualized(coil.board)) {
+        continue;
+      }
       if (coil.number == GetGameOnSolenoid()) {
         // Keep the high-power enable coil asserted for the whole test. Pulsing
         // it as part of the test would drop power and make every following
@@ -806,6 +831,9 @@ void PPUC::LampTest(uint8_t number) {
 
   if (number != 0) {
     for (const auto& lamp : GetLamps()) {
+      if (IsBoardVirtualized(lamp.board)) {
+        continue;
+      }
       if (lamp.type == LED_TYPE_LAMP && lamp.number == number) {
         printf(
             "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\nColor: "
@@ -817,6 +845,9 @@ void PPUC::LampTest(uint8_t number) {
     }
 
     for (const auto& coil : GetCoils()) {
+      if (IsBoardVirtualized(coil.board)) {
+        continue;
+      }
       if (coil.type == PWM_TYPE_LAMP && coil.number == number) {
         printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
                coil.board, coil.port, coil.number, coil.description.c_str());
@@ -827,14 +858,21 @@ void PPUC::LampTest(uint8_t number) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10000));
 
     for (const auto& lamp : GetLamps()) {
-      SetLampState(lamp.number, 0);
+      if (!IsBoardVirtualized(lamp.board)) {
+        SetLampState(lamp.number, 0);
+      }
     }
 
     for (const auto& coil : GetCoils()) {
-      SetSolenoidState(coil.number, 0);
+      if (!IsBoardVirtualized(coil.board)) {
+        SetSolenoidState(coil.number, 0);
+      }
     }
   } else {
     for (const auto& lamp : GetLamps()) {
+      if (IsBoardVirtualized(lamp.board)) {
+        continue;
+      }
       if (lamp.type == LED_TYPE_LAMP) {
         printf(
             "\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\nColor: %08X\n",
@@ -848,6 +886,9 @@ void PPUC::LampTest(uint8_t number) {
     }
 
     for (const auto& coil : GetCoils()) {
+      if (IsBoardVirtualized(coil.board)) {
+        continue;
+      }
       if (coil.type == PWM_TYPE_LAMP) {
         printf("\nBoard: %d\nPort: %d\nNumber: %d\nDescription: %s\n",
                coil.board, coil.port, coil.number, coil.description.c_str());
@@ -870,6 +911,9 @@ void PPUC::FlasherTest(uint8_t number) {
   printf("=========\n");
 
   for (const auto& lamp : GetLamps()) {
+    if (IsBoardVirtualized(lamp.board)) {
+      continue;
+    }
     if (lamp.type == LED_TYPE_FLASHER) {
       if (number != 0 && lamp.number != number) {
         continue;
@@ -889,6 +933,9 @@ void PPUC::FlasherTest(uint8_t number) {
   }
 
   for (const auto& coil : GetCoils()) {
+    if (IsBoardVirtualized(coil.board)) {
+      continue;
+    }
     if (coil.type == PWM_TYPE_FLASHER) {
       if (number != 0 && coil.number != number) {
         continue;
@@ -931,9 +978,15 @@ void PPUC::SwitchTest() {
   printf("=========\n");
 
   const auto switches = GetSwitches();
-  if (!switches.empty()) {
+  std::vector<PPUCSwitch> physicalSwitches;
+  for (const auto& vswitch : switches) {
+    if (!IsBoardVirtualized(vswitch.board)) {
+      physicalSwitches.push_back(vswitch);
+    }
+  }
+  if (!physicalSwitches.empty()) {
     printf("Configured switches:\n");
-    for (const auto& vswitch : switches) {
+    for (const auto& vswitch : physicalSwitches) {
       printf("  #%d  board=%d port=%d  %s\n", vswitch.number, vswitch.board,
              vswitch.port, vswitch.description.c_str());
     }
@@ -947,6 +1000,14 @@ void PPUC::SwitchTest() {
   while (true) {
     if ((switchState = GetNextSwitchState()) != nullptr) {
       auto it = std::find_if(switches.begin(), switches.end(),
+                             [switchState](const PPUCSwitch& vswitch) {
+                               return vswitch.number == switchState->number;
+                             });
+      if (it != switches.end() && IsBoardVirtualized(it->board)) {
+        delete switchState;
+        continue;
+      }
+      it = std::find_if(physicalSwitches.begin(), physicalSwitches.end(),
                              [switchState](const PPUCSwitch& vswitch) {
                                return vswitch.number == switchState->number;
                              });

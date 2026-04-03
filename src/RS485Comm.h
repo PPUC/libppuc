@@ -51,6 +51,7 @@ struct VirtualSwitchBoardState {
   uint8_t board = ppuc::v2::kNoBoard;
   std::vector<uint16_t> switchNumbers;
   std::vector<uint8_t> switchStates;
+  bool dirty = false;
 };
 
 class RS485Comm {
@@ -78,8 +79,10 @@ class RS485Comm {
   void SetConfiguredBoards(const std::vector<uint8_t>& boards);
   void SetSwitchNumbersByBoard(
       const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
+  void SetSkippedBoards(const std::set<uint8_t>& boards);
   void FinalizeConfiguredBoardPresence();
   bool IsBoardPresent(uint8_t board) const;
+  bool IsBoardVirtualized(uint8_t board) const;
   void SetActiveSwitchBoards(const std::vector<uint8_t>& boards);
 
   void RegisterSwitchBoard(uint8_t number);
@@ -99,6 +102,9 @@ class RS485Comm {
                         uint8_t key);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState);
+  bool SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
+                              bool* outHadState);
+  uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
   void ReceiveSwitchStateChain(uint8_t firstBoard);
   void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
   void EnsureConfiguredBoardPresenceKnown();
@@ -115,6 +121,7 @@ class RS485Comm {
   uint8_t m_switchBoardIndex = 0;
   std::vector<uint8_t> m_configuredBoards;
   std::set<uint8_t> m_presentBoards;
+  std::set<uint8_t> m_skippedBoards;
   std::unordered_map<uint8_t, std::vector<uint16_t>> m_switchNumbersByBoard;
   std::unordered_map<uint8_t, VirtualSwitchBoardState> m_virtualSwitchBoards;
   std::unordered_map<uint16_t, uint8_t> m_virtualSwitchOwnerByNumber;

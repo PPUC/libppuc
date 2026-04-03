@@ -468,6 +468,10 @@ void RS485Comm::SetSwitchNumbersByBoard(
   m_switchNumbersByBoard = switchesByBoard;
 }
 
+void RS485Comm::SetSkippedBoards(const std::set<uint8_t>& boards) {
+  m_skippedBoards = boards;
+}
+
 void RS485Comm::SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config) {
   if (ppuc::v2::IsValidRuntimeConfig(config)) {
     m_runtimeConfig = config;
@@ -535,6 +539,16 @@ bool RS485Comm::SetVirtualSwitchState(uint16_t number, uint8_t state) {
     }
 
     boardState.switchStates[i] = normalizedState;
+    boardState.dirty = true;
+    {
+      std::lock_guard<std::mutex> lock(m_stateMutex);
+      const auto switchIt = m_switchNumberToIndex.find(number);
+      if (switchIt != m_switchNumberToIndex.end() &&
+          switchIt->second < ppuc::v2::kMaxSwitchBits) {
+        ppuc::v2::SetBitmapBit(m_switchBitmap, switchIt->second,
+                               normalizedState != 0);
+      }
+    }
     {
       std::lock_guard<std::mutex> lock(m_switchesQueueMutex);
       m_switches.push(new PPUCSwitchState(number, normalizedState));
@@ -553,6 +567,11 @@ bool RS485Comm::IsSwitchVirtualized(uint16_t number) const {
 
 bool RS485Comm::IsBoardPresent(uint8_t board) const {
   return m_presentBoards.find(board) != m_presentBoards.end();
+}
+
+bool RS485Comm::IsBoardVirtualized(uint8_t board) const {
+  const_cast<RS485Comm*>(this)->EnsureConfiguredBoardPresenceKnown();
+  return m_virtualSwitchBoards.find(board) != m_virtualSwitchBoards.end();
 }
 
 void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
@@ -593,6 +612,16 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
       buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes);
   buffer[13] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[14] = static_cast<uint8_t>(crc & 0xff);
+
+  if (m_skippedBoards.find(buffer[5]) != m_skippedBoards.end()) {
+    if (m_debug) {
+      DebugPrintf(
+          "Skipping V2 ConfigFrame for board=%u topic=%u index=%u key=%u due to forced virtualization",
+          buffer[5], buffer[6], buffer[7], buffer[8]);
+    }
+    delete event;
+    return true;
+  }
 
   delete event;
 
@@ -667,6 +696,16 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
   bool success = true;
 
   while (expected != ppuc::v2::kNoBoard && hops++ < RS485_COMM_MAX_BOARDS) {
+    if (m_virtualSwitchBoards.find(expected) != m_virtualSwitchBoards.end()) {
+      next = GetLogicalNextSwitchBoard(expected);
+      if (!SendVirtualSwitchReply(expected, next, &hadState)) {
+        success = false;
+        break;
+      }
+      expected = next;
+      continue;
+    }
+
     if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
       success = false;
       break;
@@ -686,6 +725,86 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
       m_needSessionResync = true;
     }
   }
+}
+
+uint8_t RS485Comm::GetLogicalNextSwitchBoard(uint8_t board) const {
+  for (uint8_t i = 0; i < m_switchBoardCounter; ++i) {
+    if (m_switchBoards[i] != board) {
+      continue;
+    }
+    if (i + 1 < m_switchBoardCounter) {
+      return m_switchBoards[i + 1];
+    }
+    return ppuc::v2::kNoBoard;
+  }
+
+  return ppuc::v2::kNoBoard;
+}
+
+bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
+                                       bool* outHadState) {
+  auto boardIt = m_virtualSwitchBoards.find(board);
+  if (boardIt == m_virtualSwitchBoards.end() || m_pSerialPort == NULL ||
+      !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
+    return false;
+  }
+
+  auto& boardState = boardIt->second;
+  const bool sendState = boardState.dirty;
+  if (outHadState) {
+    *outHadState = sendState;
+  }
+
+  const size_t switchBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.switchBits);
+  const size_t payloadBytes =
+      sendState ? ppuc::v2::SwitchPayloadBytes(m_runtimeConfig)
+                : ppuc::v2::SwitchNoChangePayloadBytes();
+  const size_t frameBytes =
+      ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
+  uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes +
+                 ppuc::v2::kMaxSwitchBytes + ppuc::v2::kCrcBytes];
+
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(
+      sendState ? ppuc::v2::kFrameSwitchState : ppuc::v2::kFrameSwitchNoChange,
+      sendState ? ppuc::v2::kFlagKeyframe : ppuc::v2::kFlagNone);
+  buffer[2] = nextBoard;
+  // Virtualized switch replies are host-synthesized chain continuations, not
+  // a new host output snapshot. Reusing the last output sequence avoids making
+  // the next real OutputStateFrame appear to jump by more than +1 on the
+  // boards, which they correctly report as a sequence gap.
+  buffer[3] = m_lastOutputSequenceSent;
+  buffer[4] = m_epoch;
+  buffer[5] = m_epoch;
+  buffer[6] = m_lastOutputSequenceSent;
+  buffer[7] = ppuc::v2::kStatusInSync;
+  buffer[8] = 0;
+
+  if (sendState) {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    memcpy(&buffer[9], m_switchBitmap, switchBytes);
+  }
+
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(
+      buffer, ppuc::v2::kHeaderBytes + payloadBytes);
+  buffer[ppuc::v2::kHeaderBytes + payloadBytes] =
+      static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[ppuc::v2::kHeaderBytes + payloadBytes + 1] =
+      static_cast<uint8_t>(crc & 0xff);
+
+  if (m_debug) {
+    DebugPrintf("Sent virtual V2 switch %s frame for board token %u -> %u",
+                sendState ? "state" : "no-change", board, nextBoard);
+  }
+
+  if (!WriteBytes(sendState ? "VirtualSwitchStateFrame"
+                            : "VirtualSwitchNoChangeFrame",
+                  buffer, frameBytes)) {
+    return false;
+  }
+
+  boardState.dirty = false;
+  return true;
 }
 
 bool RS485Comm::ResyncSession() {
@@ -739,6 +858,23 @@ void RS485Comm::FinalizeConfiguredBoardPresence() {
   m_virtualSwitchOwnerByNumber.clear();
 
   for (const uint8_t board : m_configuredBoards) {
+    if (m_skippedBoards.find(board) != m_skippedBoards.end()) {
+      VirtualSwitchBoardState boardState;
+      boardState.board = board;
+      const auto switches = m_switchNumbersByBoard.find(board);
+      if (switches != m_switchNumbersByBoard.end()) {
+        boardState.switchNumbers = switches->second;
+        boardState.switchStates.assign(boardState.switchNumbers.size(), 0);
+        for (const uint16_t switchNumber : boardState.switchNumbers) {
+          m_virtualSwitchOwnerByNumber[switchNumber] = board;
+        }
+      }
+      m_virtualSwitchBoards[board] = boardState;
+      printf("Board %u skipped; virtualized with %zu switch(es).\n", board,
+             boardState.switchNumbers.size());
+      continue;
+    }
+
     if (m_presentBoards.find(board) != m_presentBoards.end()) {
       printf("Board %u found.\n", board);
       continue;
@@ -929,19 +1065,39 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
         case ppuc::v2::kFrameConfig:
           payloadBytes = ppuc::v2::kConfigPayloadBytes;
           break;
+        case ppuc::v2::kFrameOutputState:
+          payloadBytes = ppuc::v2::OutputPayloadBytes(m_runtimeConfig);
+          break;
+        case ppuc::v2::kFrameSwitchState:
+          payloadBytes = ppuc::v2::SwitchPayloadBytes(m_runtimeConfig);
+          break;
+        case ppuc::v2::kFrameSwitchNoChange:
+          payloadBytes = ppuc::v2::SwitchNoChangePayloadBytes();
+          break;
         case ppuc::v2::kFrameReset:
         case ppuc::v2::kFrameHeartbeat:
         case ppuc::v2::kFrameError:
           payloadBytes = 0;
           break;
         default:
-          return false;
+          if (m_debug) {
+            DebugPrintf(
+                "Ignoring unexpected V2 frame type 0x%02X while waiting for config ack",
+                static_cast<unsigned>(frameType));
+          }
+          continue;
       }
 
-      uint8_t discard[ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes +
+      uint8_t discard[ppuc::v2::kHeaderBytes + ppuc::v2::kMaxCoilBytes +
+                      ppuc::v2::kMaxLampBytes + ppuc::v2::kGiBytes +
                       ppuc::v2::kCrcBytes];
       if (payloadBytes + ppuc::v2::kCrcBytes > sizeof(discard)) {
-        return false;
+        if (m_debug || m_debugErrors) {
+          ErrorPrintf(
+              "Cannot discard V2 frame type 0x%02X with %zu-byte payload while waiting for config ack",
+              static_cast<unsigned>(frameType), payloadBytes);
+        }
+        continue;
       }
       sp_blocking_read(m_pSerialPort, discard, payloadBytes + ppuc::v2::kCrcBytes,
                        RS485_COMM_SERIAL_READ_TIMEOUT);
@@ -961,7 +1117,7 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
     if (receivedCrc != calculatedCrc) {
       ErrorPrintf("Invalid V2 config ack CRC: got=%04X expected=%04X",
                   receivedCrc, calculatedCrc);
-      return false;
+      continue;
     }
 
     if (buffer[5] != boardId || buffer[6] != topic || buffer[7] != index ||
