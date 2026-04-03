@@ -340,14 +340,15 @@ void RS485Comm::QueueEvent(Event* event) {
       delete event;
       return;
 
-    // @todo: Nobody should be sending switch events back to us anymore
     case EVENT_READ_SWITCHES:
       delete event;
       return;
   }
 
-  std::lock_guard<std::mutex> lock(m_eventQueueMutex);
-  m_events.push(event);
+  // Legacy RS485 event packets are no longer part of the active v2 transport.
+  // Drop any unhandled event types instead of queueing them for the removed
+  // legacy wire path.
+  delete event;
 }
 
 void RS485Comm::Disconnect() {
@@ -479,6 +480,9 @@ bool RS485Comm::Connect(const char* pDevice) {
   m_epoch = 1;
   m_sequence = 0;
   m_lastOutputSequenceSent = 0;
+  memset(m_activeBoards, 0, sizeof(m_activeBoards));
+  m_presentBoards.clear();
+  m_boardPresenceFinalized = false;
 
   // Reset boards before sending a fresh configuration. This handles
   // restart-without-power-cycle scenarios.
@@ -499,6 +503,70 @@ void RS485Comm::RegisterSwitchBoard(uint8_t number) {
       number < RS485_COMM_MAX_BOARDS) {
     m_switchBoards[m_switchBoardCounter] = number;
     m_switchBoardCounter++;
+  }
+}
+
+bool RS485Comm::IsBoardActive(uint8_t number) const {
+  return IsBoardPresent(number);
+}
+
+void RS485Comm::SetConfiguredBoards(const std::vector<uint8_t>& boards) {
+  m_configuredBoards = boards;
+  m_boardPresenceFinalized = false;
+}
+
+void RS485Comm::SetSwitchNumbersByBoard(
+    const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard) {
+  m_switchNumbersByBoard = switchesByBoard;
+  m_boardPresenceFinalized = false;
+}
+
+void RS485Comm::EnsureConfiguredBoardPresenceKnown() {
+  if (m_boardPresenceFinalized) {
+    return;
+  }
+
+  FinalizeConfiguredBoardPresence();
+}
+
+void RS485Comm::FinalizeConfiguredBoardPresence() {
+  if (m_boardPresenceFinalized) {
+    return;
+  }
+
+  printf("Configured boards:");
+  if (m_configuredBoards.empty()) {
+    printf(" none\n");
+  } else {
+    for (const uint8_t board : m_configuredBoards) {
+      printf(" %u", board);
+    }
+    printf("\n");
+  }
+
+  for (const uint8_t board : m_configuredBoards) {
+    if (m_presentBoards.find(board) != m_presentBoards.end()) {
+      printf("Board %u found.\n", board);
+    } else {
+      printf("Board %u missing.\n", board);
+    }
+  }
+
+  m_boardPresenceFinalized = true;
+}
+
+bool RS485Comm::IsBoardPresent(uint8_t board) const {
+  return m_presentBoards.find(board) != m_presentBoards.end();
+}
+
+void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
+  m_switchBoardCounter = 0;
+  for (const uint8_t board : boards) {
+    if (m_switchBoardCounter >= RS485_COMM_MAX_BOARDS ||
+        board >= RS485_COMM_MAX_BOARDS) {
+      break;
+    }
+    m_switchBoards[m_switchBoardCounter++] = board;
   }
 }
 
@@ -572,14 +640,122 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
       buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes);
   buffer[13] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[14] = static_cast<uint8_t>(crc & 0xff);
-
   delete event;
 
-  if (WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
-    if (m_debug) {
-      DebugPrintf("Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u",
-                  buffer[5], buffer[6], buffer[7], buffer[8], buffer[3]);
+  for (uint8_t attempt = 0; attempt < RS485_COMM_CONFIG_ACK_RETRIES; ++attempt) {
+    if (!WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
+      return false;
     }
+
+    if (m_debug) {
+      DebugPrintf(
+          "Sent V2 ConfigFrame board=%u topic=%u index=%u key=%u seq=%u attempt=%u",
+          buffer[5], buffer[6], buffer[7], buffer[8], buffer[3],
+          static_cast<unsigned>(attempt + 1));
+    }
+
+    if (ReceiveConfigAck(buffer[5], buffer[6], buffer[7], buffer[8])) {
+      m_presentBoards.insert(buffer[5]);
+      if (buffer[5] < RS485_COMM_MAX_BOARDS) {
+        m_activeBoards[buffer[5]] = true;
+      }
+      return true;
+    }
+
+    sp_flush(m_pSerialPort, SP_BUF_INPUT);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  ErrorPrintf("Missing V2 config ack: board=%u topic=%u index=%u key=%u",
+              buffer[5], buffer[6], buffer[7], buffer[8]);
+  return false;
+}
+
+bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
+                                 uint8_t key) {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  auto start = std::chrono::steady_clock::now();
+  uint8_t header[ppuc::v2::kHeaderBytes];
+  uint8_t buffer[ppuc::v2::kConfigAckFrameBytes];
+
+  while ((std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - start))
+             .count() < RS485_COMM_CONFIG_ACK_TIMEOUT_US) {
+    if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
+      continue;
+    }
+
+    sp_blocking_read(m_pSerialPort, &header[0], 1, RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (header[0] != ppuc::v2::kSyncByte) {
+      continue;
+    }
+
+    sp_blocking_read(m_pSerialPort, &header[1], ppuc::v2::kHeaderBytes - 1,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+    const ppuc::v2::FrameType frameType = ppuc::v2::ExtractType(header[1]);
+    if (frameType != ppuc::v2::kFrameConfigAck) {
+      size_t payloadBytes = 0;
+      switch (frameType) {
+        case ppuc::v2::kFrameSetup:
+          payloadBytes = ppuc::v2::kSetupPayloadBytes;
+          break;
+        case ppuc::v2::kFrameMapping:
+          payloadBytes = ppuc::v2::kMappingPayloadBytes;
+          break;
+        case ppuc::v2::kFrameConfig:
+          payloadBytes = ppuc::v2::kConfigPayloadBytes;
+          break;
+        case ppuc::v2::kFrameReset:
+        case ppuc::v2::kFrameHeartbeat:
+        case ppuc::v2::kFrameError:
+          payloadBytes = 0;
+          break;
+        default:
+          return false;
+      }
+      uint8_t discard[ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes +
+                      ppuc::v2::kCrcBytes];
+      if (payloadBytes + ppuc::v2::kCrcBytes > sizeof(discard)) {
+        return false;
+      }
+      sp_blocking_read(m_pSerialPort, discard, payloadBytes + ppuc::v2::kCrcBytes,
+                       RS485_COMM_SERIAL_READ_TIMEOUT);
+      continue;
+    }
+
+    memcpy(buffer, header, ppuc::v2::kHeaderBytes);
+    sp_blocking_read(m_pSerialPort, &buffer[ppuc::v2::kHeaderBytes],
+                     ppuc::v2::kConfigAckPayloadBytes + ppuc::v2::kCrcBytes,
+                     RS485_COMM_SERIAL_READ_TIMEOUT);
+
+    const uint16_t receivedCrc =
+        (static_cast<uint16_t>(buffer[ppuc::v2::kConfigAckFrameBytes - 2]) << 8) |
+        static_cast<uint16_t>(buffer[ppuc::v2::kConfigAckFrameBytes - 1]);
+    const uint16_t calculatedCrc = ppuc::v2::Crc16Ccitt(
+        buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigAckPayloadBytes);
+    if (receivedCrc != calculatedCrc) {
+      ErrorPrintf("Invalid V2 config ack CRC: got=%04X expected=%04X",
+                  receivedCrc, calculatedCrc);
+      continue;
+    }
+
+    if (buffer[5] != boardId || buffer[6] != topic || buffer[7] != index ||
+        buffer[8] != key) {
+      ErrorPrintf("Unexpected V2 config ack: board=%u topic=%u index=%u key=%u",
+                  buffer[5], buffer[6], buffer[7], buffer[8]);
+      continue;
+    }
+
+    if (buffer[9] != ppuc::v2::kConfigAckAccepted) {
+      ErrorPrintf(
+          "Rejected V2 config ack: board=%u topic=%u index=%u key=%u status=%u",
+          boardId, topic, index, key, buffer[9]);
+      return false;
+    }
+
     return true;
   }
 
@@ -938,25 +1114,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
 }
 
 bool RS485Comm::SendEvent(Event* event) {
-  if (m_pSerialPort != NULL) {
-    m_msg[0] = (uint8_t)255;
-    m_msg[1] = event->sourceId;
-    m_msg[2] = event->eventId >> 8;
-    m_msg[3] = event->eventId & 0xff;
-    m_msg[4] = event->value;
-    m_msg[5] = 0b10101010;
-    m_msg[6] = 0b01010101;
-
-    if (WriteBytes("LegacyEvent", m_msg, sizeof(m_msg))) {
-      if (m_debug) {
-        // @todo use logger
-        printf("Sent Event %d %d %d\n", event->sourceId, event->eventId,
-               event->value);
-      }
-      return true;
-    }
-  }
-
+  (void)event;
   return false;
 }
 

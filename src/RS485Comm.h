@@ -9,6 +9,7 @@
 #include <cstring>
 #include <mutex>
 #include <queue>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -44,6 +45,8 @@
 #define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 10
 #define RS485_COMM_RESYNC_COOLDOWN_MS 5000
+#define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
+#define RS485_COMM_CONFIG_ACK_RETRIES 3
 
 class RS485Comm {
  public:
@@ -67,9 +70,16 @@ class RS485Comm {
                    const std::vector<uint16_t>& lamps,
                    const std::vector<uint16_t>& switches);
   bool SendMappingFrames();
+  void SetConfiguredBoards(const std::vector<uint8_t>& boards);
+  void SetSwitchNumbersByBoard(
+      const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
+  void FinalizeConfiguredBoardPresence();
+  bool IsBoardPresent(uint8_t board) const;
+  void SetActiveSwitchBoards(const std::vector<uint8_t>& boards);
 
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
+  bool IsBoardActive(uint8_t number) const;
 
   void SetDebug(bool debug);
   void SetDebugErrors(bool debugErrors);
@@ -83,10 +93,13 @@ class RS485Comm {
   void PollEvents(int board);
   bool ResyncSession();
   bool SendOutputStateFrame(uint8_t nextBoard);
+  bool ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
+                        uint8_t key);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState);
   void ReceiveSwitchStateChain(uint8_t firstBoard);
   void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
+  void EnsureConfiguredBoardPresenceKnown();
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
   void DebugPrintf(const char* format, ...);
@@ -101,6 +114,9 @@ class RS485Comm {
   uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
   uint8_t m_switchBoardCounter = 0;  // Number of registered switch boards.
   uint8_t m_switchBoardIndex = 0;
+  std::vector<uint8_t> m_configuredBoards;
+  std::set<uint8_t> m_presentBoards;
+  std::unordered_map<uint8_t, std::vector<uint16_t>> m_switchNumbersByBoard;
   bool m_activeBoards[RS485_COMM_MAX_BOARDS] = {false};
 
   bool m_debug = false;
@@ -142,4 +158,5 @@ class RS485Comm {
   std::chrono::steady_clock::time_point m_nextOutputFrameAt;
   std::chrono::steady_clock::time_point m_nextSwitchPollAt;
   std::chrono::steady_clock::time_point m_nextAllowedResyncAt;
+  bool m_boardPresenceFinalized = false;
 };

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <set>
+#include <unordered_map>
 
 #include "Adafruit_NeoPixel.h"
 #include "RS485Comm.h"
@@ -243,12 +244,15 @@ bool PPUC::Connect() {
     std::set<uint16_t> coilNumbers;
     std::set<uint16_t> lampNumbers;
     std::set<uint16_t> switchNumbers;
+    std::unordered_map<uint8_t, std::vector<uint16_t>> switchNumbersByBoard;
     const YAML::Node& boards = m_ppucConfig["boards"];
+    std::vector<uint8_t> configuredBoards;
     for (YAML::Node n_board : boards) {
       const uint8_t boardNumber = n_board["number"].as<uint8_t>();
       if (isSkippedBoard(boardNumber)) {
         continue;
       }
+      configuredBoards.push_back(boardNumber);
 
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           boardNumber, (uint8_t)CONFIG_TOPIC_PLATFORM, 0,
@@ -283,7 +287,10 @@ bool PPUC::Connect() {
           if (isSkippedBoard(n_switch["board"].as<uint8_t>())) {
             continue;
           }
-          switchNumbers.insert(n_switch["number"].as<uint16_t>());
+          const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
+          switchNumbers.insert(switchNumber);
+          switchNumbersByBoard[n_switch["board"].as<uint8_t>()].push_back(
+              switchNumber);
         }
       }
     }
@@ -294,7 +301,10 @@ bool PPUC::Connect() {
         if (isSkippedBoard(n_switch["board"].as<uint8_t>())) {
           continue;
         }
-        switchNumbers.insert(n_switch["number"].as<uint16_t>());
+        const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
+        switchNumbers.insert(switchNumber);
+        switchNumbersByBoard[n_switch["board"].as<uint8_t>()].push_back(
+            switchNumber);
       }
     }
 
@@ -358,6 +368,8 @@ bool PPUC::Connect() {
     switchMapping.resize(runtimeConfig.switchBits);
     m_pRS485Comm->SetMappings(coilMapping, lampMapping, switchMapping);
     m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
+    m_pRS485Comm->SetConfiguredBoards(configuredBoards);
+    m_pRS485Comm->SetSwitchNumbersByBoard(switchNumbersByBoard);
 
     // Send switch matrix configuration to I/O boards
     // IMPORTANT: This must be done before sending individual switch configs
@@ -705,12 +717,22 @@ bool PPUC::Connect() {
       }
     }
 
-    // Configure token-ring handoff for switch-capable boards before the V2
-    // setup frame starts runtime processing on the boards.
-    for (size_t i = 0; i < switchBoards.size(); ++i) {
-      const uint8_t current = switchBoards[i];
-      const uint8_t next = (i + 1 < switchBoards.size())
-                               ? switchBoards[i + 1]
+    m_pRS485Comm->FinalizeConfiguredBoardPresence();
+
+    std::vector<uint8_t> presentSwitchBoards;
+    for (const uint8_t board : switchBoards) {
+      if (m_pRS485Comm->IsBoardPresent(board)) {
+        presentSwitchBoards.push_back(board);
+      }
+    }
+    m_pRS485Comm->SetActiveSwitchBoards(presentSwitchBoards);
+
+    // Configure token-ring handoff only across boards that acknowledged
+    // configuration during startup.
+    for (size_t i = 0; i < presentSwitchBoards.size(); ++i) {
+      const uint8_t current = presentSwitchBoards[i];
+      const uint8_t next = (i + 1 < presentSwitchBoards.size())
+                               ? presentSwitchBoards[i + 1]
                                : ppuc::v2::kNoBoard;
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 0,
