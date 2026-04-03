@@ -52,6 +52,9 @@ class PPUCAPI PPUC {
   void SetSolenoidState(int number, int state);
   void SetLampState(int number, int state);
   void SetGIState(int string, int brightness);
+  void SetSwitchState(int number, int state);
+  bool IsSwitchVirtualized(int number);
+  bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };

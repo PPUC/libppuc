@@ -521,6 +521,11 @@ void RS485Comm::SetSwitchNumbersByBoard(
   m_boardPresenceFinalized = false;
 }
 
+void RS485Comm::SetSkippedBoards(const std::set<uint8_t>& boards) {
+  m_skippedBoards = boards;
+  m_boardPresenceFinalized = false;
+}
+
 void RS485Comm::EnsureConfiguredBoardPresenceKnown() {
   if (m_boardPresenceFinalized) {
     return;
@@ -544,11 +549,33 @@ void RS485Comm::FinalizeConfiguredBoardPresence() {
     printf("\n");
   }
 
+  m_virtualSwitchBoards.clear();
+  m_virtualSwitchOwnerByNumber.clear();
+
   for (const uint8_t board : m_configuredBoards) {
     if (m_presentBoards.find(board) != m_presentBoards.end()) {
       printf("Board %u found.\n", board);
+      continue;
+    }
+
+    VirtualSwitchBoardState boardState;
+    boardState.board = board;
+    const auto switches = m_switchNumbersByBoard.find(board);
+    if (switches != m_switchNumbersByBoard.end()) {
+      boardState.switchNumbers = switches->second;
+      boardState.switchStates.assign(boardState.switchNumbers.size(), 0);
+      for (const uint16_t switchNumber : boardState.switchNumbers) {
+        m_virtualSwitchOwnerByNumber[switchNumber] = board;
+      }
+    }
+    m_virtualSwitchBoards[board] = boardState;
+
+    if (m_skippedBoards.find(board) != m_skippedBoards.end()) {
+      printf("Board %u skipped; virtualized with %zu switch(es).\n", board,
+             boardState.switchNumbers.size());
     } else {
-      printf("Board %u missing.\n", board);
+      printf("Board %u missing; virtualized with %zu switch(es).\n", board,
+             boardState.switchNumbers.size());
     }
   }
 
@@ -557,6 +584,11 @@ void RS485Comm::FinalizeConfiguredBoardPresence() {
 
 bool RS485Comm::IsBoardPresent(uint8_t board) const {
   return m_presentBoards.find(board) != m_presentBoards.end();
+}
+
+bool RS485Comm::IsBoardVirtualized(uint8_t board) const {
+  const_cast<RS485Comm*>(this)->EnsureConfiguredBoardPresenceKnown();
+  return m_virtualSwitchBoards.find(board) != m_virtualSwitchBoards.end();
 }
 
 void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
@@ -568,6 +600,56 @@ void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
     }
     m_switchBoards[m_switchBoardCounter++] = board;
   }
+}
+
+bool RS485Comm::SetVirtualSwitchState(uint16_t number, uint8_t state) {
+  EnsureConfiguredBoardPresenceKnown();
+
+  const auto owner = m_virtualSwitchOwnerByNumber.find(number);
+  if (owner == m_virtualSwitchOwnerByNumber.end()) {
+    return false;
+  }
+
+  auto boardIt = m_virtualSwitchBoards.find(owner->second);
+  if (boardIt == m_virtualSwitchBoards.end()) {
+    return false;
+  }
+
+  auto& boardState = boardIt->second;
+  for (size_t i = 0; i < boardState.switchNumbers.size(); ++i) {
+    if (boardState.switchNumbers[i] != number) {
+      continue;
+    }
+
+    const uint8_t normalizedState = state == 0 ? 0 : 1;
+    if (boardState.switchStates[i] == normalizedState) {
+      return true;
+    }
+
+    boardState.switchStates[i] = normalizedState;
+    {
+      std::lock_guard<std::mutex> lock(m_stateMutex);
+      const auto switchIt = m_switchNumberToIndex.find(number);
+      if (switchIt != m_switchNumberToIndex.end() &&
+          switchIt->second < ppuc::v2::kMaxSwitchBits) {
+        ppuc::v2::SetBitmapBit(m_switchBitmap, switchIt->second,
+                               normalizedState != 0);
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lock(m_switchesQueueMutex);
+      m_switches.push(new PPUCSwitchState(number, normalizedState));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::IsSwitchVirtualized(uint16_t number) const {
+  const_cast<RS485Comm*>(this)->EnsureConfiguredBoardPresenceKnown();
+  return m_virtualSwitchOwnerByNumber.find(number) !=
+         m_virtualSwitchOwnerByNumber.end();
 }
 
 void RS485Comm::SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config) {
@@ -640,6 +722,15 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
       buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes);
   buffer[13] = static_cast<uint8_t>((crc >> 8) & 0xff);
   buffer[14] = static_cast<uint8_t>(crc & 0xff);
+  if (m_skippedBoards.find(buffer[5]) != m_skippedBoards.end()) {
+    if (m_debug) {
+      DebugPrintf(
+          "Skipping V2 ConfigFrame for board=%u topic=%u index=%u key=%u due to forced virtualization",
+          buffer[5], buffer[6], buffer[7], buffer[8]);
+    }
+    delete event;
+    return true;
+  }
   delete event;
 
   for (uint8_t attempt = 0; attempt < RS485_COMM_CONFIG_ACK_RETRIES; ++attempt) {

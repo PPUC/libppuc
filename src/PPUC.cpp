@@ -249,10 +249,10 @@ bool PPUC::Connect() {
     std::vector<uint8_t> configuredBoards;
     for (YAML::Node n_board : boards) {
       const uint8_t boardNumber = n_board["number"].as<uint8_t>();
+      configuredBoards.push_back(boardNumber);
       if (isSkippedBoard(boardNumber)) {
         continue;
       }
-      configuredBoards.push_back(boardNumber);
 
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           boardNumber, (uint8_t)CONFIG_TOPIC_PLATFORM, 0,
@@ -284,9 +284,6 @@ bool PPUC::Connect() {
       const YAML::Node& matrixSwitches = switchMatrix["switches"];
       if (matrixSwitches) {
         for (YAML::Node n_switch : matrixSwitches) {
-          if (isSkippedBoard(n_switch["board"].as<uint8_t>())) {
-            continue;
-          }
           const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
           switchNumbers.insert(switchNumber);
           switchNumbersByBoard[n_switch["board"].as<uint8_t>()].push_back(
@@ -298,9 +295,6 @@ bool PPUC::Connect() {
     const YAML::Node& switches = m_ppucConfig["switches"];
     if (switches) {
       for (YAML::Node n_switch : switches) {
-        if (isSkippedBoard(n_switch["board"].as<uint8_t>())) {
-          continue;
-        }
         const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
         switchNumbers.insert(switchNumber);
         switchNumbersByBoard[n_switch["board"].as<uint8_t>()].push_back(
@@ -370,6 +364,7 @@ bool PPUC::Connect() {
     m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
     m_pRS485Comm->SetConfiguredBoards(configuredBoards);
     m_pRS485Comm->SetSwitchNumbersByBoard(switchNumbersByBoard);
+    m_pRS485Comm->SetSkippedBoards(m_skippedBoards);
 
     // Send switch matrix configuration to I/O boards
     // IMPORTANT: This must be done before sending individual switch configs
@@ -392,24 +387,24 @@ bool PPUC::Connect() {
       const YAML::Node& switches = switchMatrix["switches"];
       if (switches) {
         for (YAML::Node n_switch : switches) {
-          if (isSkippedBoard(n_switch["board"].as<uint8_t>())) {
-            continue;
-          }
           if (m_debug) {
             // @todo user logger
             printf("Description: %s\n",
                    n_switch["description"].as<std::string>().c_str());
           }
 
-          index = 0;
-          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-              n_switch["board"].as<uint8_t>(),
-              (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-              (uint8_t)CONFIG_TOPIC_PORT, n_switch["port"].as<uint32_t>()));
-          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-              n_switch["board"].as<uint8_t>(),
-              (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
-              (uint8_t)CONFIG_TOPIC_NUMBER, n_switch["number"].as<uint32_t>()));
+          if (!isSkippedBoard(n_switch["board"].as<uint8_t>())) {
+            index = 0;
+            m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+                n_switch["board"].as<uint8_t>(),
+                (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
+                (uint8_t)CONFIG_TOPIC_PORT, n_switch["port"].as<uint32_t>()));
+            m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+                n_switch["board"].as<uint8_t>(),
+                (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
+                (uint8_t)CONFIG_TOPIC_NUMBER,
+                n_switch["number"].as<uint32_t>()));
+          }
 
           m_switches.push_back(PPUCSwitch(
               n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
@@ -422,28 +417,27 @@ bool PPUC::Connect() {
     // Send switch configuration to I/O boards
     if (switches) {
       for (YAML::Node n_switch : switches) {
-        if (isSkippedBoard(n_switch["board"].as<uint8_t>())) {
-          continue;
-        }
         if (m_debug) {
           // @todo user logger
           printf("Description: %s\n",
                  n_switch["description"].as<std::string>().c_str());
         }
 
-        index = 0;
-        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-            n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
-            index++, (uint8_t)CONFIG_TOPIC_PORT,
-            n_switch["port"].as<uint32_t>()));
-        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-            n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
-            index++, (uint8_t)CONFIG_TOPIC_NUMBER,
-            n_switch["number"].as<uint32_t>()));
-        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-            n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
-            index++, (uint8_t)CONFIG_TOPIC_DEBOUNCE_TIME,
-            n_switch["debounce"].as<uint32_t>()));
+        if (!isSkippedBoard(n_switch["board"].as<uint8_t>())) {
+          index = 0;
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
+              index++, (uint8_t)CONFIG_TOPIC_PORT,
+              n_switch["port"].as<uint32_t>()));
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
+              index++, (uint8_t)CONFIG_TOPIC_NUMBER,
+              n_switch["number"].as<uint32_t>()));
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
+              index++, (uint8_t)CONFIG_TOPIC_DEBOUNCE_TIME,
+              n_switch["debounce"].as<uint32_t>()));
+        }
 
         m_switches.push_back(PPUCSwitch(
             n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
@@ -787,6 +781,19 @@ void PPUC::SetGIState(int string, int brightness) {
   m_pRS485Comm->QueueEvent(new Event(
       EVENT_SOURCE_GI, static_cast<uint16_t>(string),
       ppuc::v2::ClampGiLevel(giBrightness)));
+}
+
+void PPUC::SetSwitchState(int number, int state) {
+  m_pRS485Comm->SetVirtualSwitchState(static_cast<uint16_t>(number),
+                                      state == 0 ? 0 : 1);
+}
+
+bool PPUC::IsSwitchVirtualized(int number) {
+  return m_pRS485Comm->IsSwitchVirtualized(static_cast<uint16_t>(number));
+}
+
+bool PPUC::IsBoardVirtualized(uint8_t board) {
+  return m_pRS485Comm->IsBoardVirtualized(board);
 }
 
 PPUCSwitchState* PPUC::GetNextSwitchState() {

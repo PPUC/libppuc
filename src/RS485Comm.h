@@ -48,6 +48,12 @@
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
 #define RS485_COMM_CONFIG_ACK_RETRIES 3
 
+struct VirtualSwitchBoardState {
+  uint8_t board = ppuc::v2::kNoBoard;
+  std::vector<uint16_t> switchNumbers;
+  std::vector<uint8_t> switchStates;
+};
+
 class RS485Comm {
  public:
   RS485Comm();
@@ -73,13 +79,17 @@ class RS485Comm {
   void SetConfiguredBoards(const std::vector<uint8_t>& boards);
   void SetSwitchNumbersByBoard(
       const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
+  void SetSkippedBoards(const std::set<uint8_t>& boards);
   void FinalizeConfiguredBoardPresence();
   bool IsBoardPresent(uint8_t board) const;
+  bool IsBoardVirtualized(uint8_t board) const;
   void SetActiveSwitchBoards(const std::vector<uint8_t>& boards);
 
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
   bool IsBoardActive(uint8_t number) const;
+  bool SetVirtualSwitchState(uint16_t number, uint8_t state);
+  bool IsSwitchVirtualized(uint16_t number) const;
 
   void SetDebug(bool debug);
   void SetDebugErrors(bool debugErrors);
@@ -116,7 +126,10 @@ class RS485Comm {
   uint8_t m_switchBoardIndex = 0;
   std::vector<uint8_t> m_configuredBoards;
   std::set<uint8_t> m_presentBoards;
+  std::set<uint8_t> m_skippedBoards;
   std::unordered_map<uint8_t, std::vector<uint16_t>> m_switchNumbersByBoard;
+  std::unordered_map<uint8_t, VirtualSwitchBoardState> m_virtualSwitchBoards;
+  std::unordered_map<uint16_t, uint8_t> m_virtualSwitchOwnerByNumber;
   bool m_activeBoards[RS485_COMM_MAX_BOARDS] = {false};
 
   bool m_debug = false;
