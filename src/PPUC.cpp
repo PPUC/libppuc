@@ -283,6 +283,12 @@ bool PPUC::Connect() {
       }
     }
 
+    // The game-on relay is a logical control solenoid consumed by board-local
+    // high-power gating even when it is not part of the normal playfield coil
+    // list. Keep it in the runtime bitmap mapping so host-side SetSolenoidState
+    // can actually assert high power during tests and startup.
+    coilNumbers.insert(m_gameOnSolenoid);
+
     const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
     if (switchMatrix) {
       const YAML::Node& matrixSwitches = switchMatrix["switches"];
