@@ -88,6 +88,7 @@ class RS485Comm {
 
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
+  uint32_t GetCleanSwitchReplyChainCount() const;
   bool IsBoardActive(uint8_t number) const;
   bool SetVirtualSwitchState(uint16_t number, uint8_t state);
   bool IsSwitchVirtualized(uint16_t number) const;
@@ -172,6 +173,7 @@ class RS485Comm {
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};
+  std::atomic<uint32_t> m_cleanSwitchReplyChainCount{0};
   std::chrono::steady_clock::time_point m_nextOutputFrameAt;
   std::chrono::steady_clock::time_point m_nextSwitchPollAt;
   std::chrono::steady_clock::time_point m_nextAllowedResyncAt;

@@ -57,16 +57,11 @@ class PPUCAPI PPUC {
   bool IsSwitchVirtualized(int number);
   bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
+  uint32_t GetCleanSwitchReplyChainCount();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
   uint8_t GetPlatform() { return m_platform; };
-
-  void CoilTest(uint8_t number);
-  void LampTest(uint8_t number);
-  void FlasherTest(uint8_t number);
-  void GITest(uint8_t number);
-  void SwitchTest();
 
   std::vector<PPUCCoil> GetCoils();
   std::vector<PPUCLamp> GetLamps();

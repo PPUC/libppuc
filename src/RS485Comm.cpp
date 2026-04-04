@@ -695,6 +695,10 @@ PPUCSwitchState* RS485Comm::GetNextSwitchState() {
   return switchState;
 }
 
+uint32_t RS485Comm::GetCleanSwitchReplyChainCount() const {
+  return m_cleanSwitchReplyChainCount.load();
+}
+
 bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
   // Wait a bit to not exceed the output buffer in case of large configurations.
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -917,6 +921,7 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
 
   if (success) {
     m_switchReplyMisses = 0;
+    ++m_cleanSwitchReplyChainCount;
   } else {
     ++m_switchReplyMisses;
     if (m_debug || m_debugErrors) {
