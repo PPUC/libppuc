@@ -59,9 +59,11 @@ The host includes the board repo headers directly:
 
 Core transport details:
 
-- UART baud: `250000`
+- UART baud: `115200`
+- Planned follow-up: move the `v2` transport baseline to `250000` after the
+  current reset/restart issues are resolved.
 - sync byte: `0xA5`
-- 4-byte header: `sync`, `typeAndFlags`, `nextBoard`, `sequence`
+- 5-byte header: `sync`, `typeAndFlags`, `nextBoard`, `sequence`, `epoch`
 - CRC: CCITT-16 over header + payload
 
 `libppuc` writes all multibyte values in big-endian byte order:
@@ -90,7 +92,7 @@ The effective `v2` startup flow in `PPUC::Connect()` is:
 6. Register switch-capable boards and send `CONFIG_TOPIC_SWITCH_CHAIN` to define token handoff only across present switch boards.
 7. Derive dense coil/lamp/switch mappings from configured logical numbers.
 8. Send `SetupFrame`.
-9. Wait 20 ms.
+9. Wait 100 ms.
 10. Send all `MappingFrame`s.
 11. Wait 1 s.
 12. Queue initial GI.
@@ -212,13 +214,16 @@ Current transport-tuning points to remember in `RS485Comm`:
 - output-frame pacing in the runtime loop
 - serial write timeout / short-write retry behavior
 
-## Current Freeze Status
+## Current Runtime Status
 
-- Long-run attract-mode testing is still not robust.
-- One run may work for several minutes, while another can freeze in under a minute.
-- The visible freeze still correlates with missed switch-reply chains and the host recovery path.
-- Host timing changes clearly affect the symptom, but that does not prove the root cause is host-only.
-- Treat firmware as still in scope, especially the board-side switch reply path and token forwarding behavior.
+- Long-run runtime behavior on the good boards is substantially better than in
+  the earlier bring-up phase.
+- Host timing still matters, but firmware-side switch reply latency was also a
+  real contributor. Moving switch-token forwarding earlier on the boards
+  reduced the required experimental switch-reply delay substantially in
+  practice.
+- The remaining primary transport issue is restart/reset robustness rather than
+  the earlier "runtime only works with very large switch delay" symptom.
 
 ## Virtual Board Implementation Notes
 
@@ -240,9 +245,14 @@ Current transport-tuning points to remember in `RS485Comm`:
 
 When debugging `v2` end-to-end, start with:
 
-1. Confirm `SetupFrame` is received before the firmware attempts DMA cutover.
-2. Verify mapping sizes equal the number of unique configured logical numbers, not raw port counts.
-3. Check that `pollEvents: true` boards also receive `CONFIG_TOPIC_SWITCH_CHAIN`.
+1. Re-test board restart/reset behavior first; that is the top unresolved
+   transport problem.
+2. Verify mapping sizes equal the number of unique configured logical numbers,
+   not raw port counts.
+3. Check that `pollEvents: true` boards also receive
+   `CONFIG_TOPIC_SWITCH_CHAIN`.
 4. Run a single-board switch test first, then multi-board token chaining.
-5. If Linux RS485 direction control looks wrong, test with and without `PPUC_RS485_HW=1`.
-6. When multi-board switch chaining mostly works but animation or switch latency looks wrong, tune timing before changing protocol semantics.
+5. If Linux RS485 direction control looks wrong, test with and without
+   `PPUC_RS485_HW=1`.
+6. When multi-board switch chaining mostly works but animation or switch
+   latency looks wrong, tune timing before changing protocol semantics.
