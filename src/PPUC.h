@@ -39,6 +39,7 @@ class PPUCAPI PPUC {
   void SetDebugErrors(bool debugErrors);
   void SetSkippedBoardsCsv(const char* skippedBoardsCsv);
   void SetSwitchReplyDelayUs(uint32_t delayUs);
+  void SetDisableFastFlipForTests(bool disableFastFlipForTests);
   bool GetDebug();
   void SetRom(const char* rom);
   const char* GetRom();
@@ -86,6 +87,7 @@ class PPUCAPI PPUC {
   uint8_t m_coinDoorClosedSwitch;
   uint8_t m_gameOnSolenoid;
   uint32_t m_switchReplyDelayUs = 0;
+  bool m_disableFastFlipForTests = false;
   std::set<uint8_t> m_skippedBoards;
 
   void SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,

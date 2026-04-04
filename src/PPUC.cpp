@@ -152,6 +152,10 @@ void PPUC::SetSwitchReplyDelayUs(uint32_t delayUs) {
   m_pRS485Comm->SetSwitchReplyDelayUs(delayUs);
 }
 
+void PPUC::SetDisableFastFlipForTests(bool disableFastFlipForTests) {
+  m_disableFastFlipForTests = disableFastFlipForTests;
+}
+
 bool PPUC::GetDebug() { return m_debug; }
 
 void PPUC::SetRom(const char* rom) { strcpy(m_rom, rom); }
@@ -487,10 +491,12 @@ bool PPUC::Connect() {
             n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
             index++, (uint8_t)CONFIG_TOPIC_HOLD_POWER_ACTIVATION_TIME,
             n_pwmOutput["holdPowerActivationTime"].as<uint32_t>()));
+        const uint32_t fastSwitch =
+            m_disableFastFlipForTests ? 0u
+                                      : n_pwmOutput["fastFlipSwitch"].as<uint32_t>();
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
             n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
-            index++, (uint8_t)CONFIG_TOPIC_FAST_SWITCH,
-            n_pwmOutput["fastFlipSwitch"].as<uint32_t>()));
+            index++, (uint8_t)CONFIG_TOPIC_FAST_SWITCH, fastSwitch));
         std::string c_type = n_pwmOutput["type"].as<std::string>();
         uint32_t type = PWM_TYPE_SOLENOID;  // "coil"
         if (strcmp(c_type.c_str(), "flasher") == 0) {
