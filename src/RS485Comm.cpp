@@ -14,6 +14,27 @@
 #include <unistd.h>
 #endif
 
+namespace {
+const char* SwitchStatusFlagName(uint8_t flag) {
+  switch (flag) {
+    case ppuc::v2::kStatusInSync:
+      return "in-sync";
+    case ppuc::v2::kStatusNeedsSetup:
+      return "needs-setup";
+    case ppuc::v2::kStatusMappingIncomplete:
+      return "mapping-incomplete";
+    case ppuc::v2::kStatusSequenceGap:
+      return "sequence-gap";
+    case ppuc::v2::kStatusParserResynced:
+      return "parser-resynced";
+    case ppuc::v2::kStatusSwitchOverflow:
+      return "switch-overflow";
+    default:
+      return "unknown";
+  }
+}
+}  // namespace
+
 #if defined(__linux__)
 namespace {
 bool ShouldEnableHardwareRs485(const char* device) {
@@ -480,6 +501,7 @@ bool RS485Comm::Connect(const char* pDevice) {
   m_epoch = 1;
   m_sequence = 0;
   m_lastOutputSequenceSent = 0;
+  memset(m_parserResyncReportsByBoard, 0, sizeof(m_parserResyncReportsByBoard));
   memset(m_activeBoards, 0, sizeof(m_activeBoards));
   m_presentBoards.clear();
   m_boardPresenceFinalized = false;
@@ -1032,6 +1054,7 @@ bool RS485Comm::ResyncSession() {
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   m_needSessionResync = false;
+  memset(m_parserResyncReportsByBoard, 0, sizeof(m_parserResyncReportsByBoard));
   m_nextAllowedResyncAt = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(
                               RS485_COMM_RESYNC_COOLDOWN_MS);
@@ -1248,6 +1271,10 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     const uint8_t epochSeen = buffer[ppuc::v2::kHeaderBytes];
     const uint8_t lastHostSequenceSeen = buffer[ppuc::v2::kHeaderBytes + 1];
     const uint8_t statusFlags = buffer[ppuc::v2::kHeaderBytes + 2];
+    const bool parserResynced =
+        (statusFlags & ppuc::v2::kStatusParserResynced) != 0;
+    const bool switchOverflow =
+        (statusFlags & ppuc::v2::kStatusSwitchOverflow) != 0;
 
     if (epochSeen != m_epoch) {
       ErrorPrintf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
@@ -1266,6 +1293,13 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       ErrorPrintf("V2 switch reply requested resync: board=%u flags=0x%02X",
                   expectedBoard, statusFlags);
       return false;
+    }
+
+    if (parserResynced || switchOverflow) {
+      ErrorPrintf("V2 switch reply status flags: board=%u flags=0x%02X%s%s",
+                  expectedBoard, statusFlags,
+                  parserResynced ? " parser-resynced" : "",
+                  switchOverflow ? " switch-overflow" : "");
     }
 
     const size_t frameBytes =
@@ -1288,6 +1322,26 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       if (m_debug) {
         DebugPrintf("Applied V2 switch bitmap diff for board token %u",
                     expectedBoard);
+      }
+    }
+
+    if (expectedBoard < RS485_COMM_MAX_BOARDS) {
+      if (parserResynced) {
+        const uint8_t reportCount = ++m_parserResyncReportsByBoard[expectedBoard];
+        if (reportCount >= RS485_COMM_PARSER_RESYNC_REPORT_THRESHOLD) {
+          ErrorPrintf(
+              "Repeated V2 parser-resynced reports from board %u (%u valid replies); scheduling soft session resync",
+              expectedBoard, reportCount);
+          m_needSessionResync = true;
+          m_parserResyncReportsByBoard[expectedBoard] = 0;
+        } else {
+          ErrorPrintf("Board %u reported %s (%u/%u before soft resync)",
+                      expectedBoard,
+                      SwitchStatusFlagName(ppuc::v2::kStatusParserResynced),
+                      reportCount, RS485_COMM_PARSER_RESYNC_REPORT_THRESHOLD);
+        }
+      } else {
+        m_parserResyncReportsByBoard[expectedBoard] = 0;
       }
     }
     return true;

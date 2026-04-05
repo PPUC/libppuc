@@ -44,6 +44,7 @@
 #define RS485_COMM_SWITCH_POLL_INTERVAL_MS 3
 #define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 10
+#define RS485_COMM_PARSER_RESYNC_REPORT_THRESHOLD 3
 #define RS485_COMM_RESYNC_COOLDOWN_MS 5000
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
 #define RS485_COMM_CONFIG_ACK_RETRIES 3
@@ -145,6 +146,7 @@ class RS485Comm {
   uint8_t m_lastOutputSequenceSent = 0;
   bool m_needSessionResync = false;
   uint8_t m_switchReplyMisses = 0;
+  uint8_t m_parserResyncReportsByBoard[RS485_COMM_MAX_BOARDS] = {0};
   uint32_t m_switchReplyDelayUs = 0;
   ppuc::v2::RuntimeConfig m_runtimeConfig;
   std::vector<uint16_t> m_coilIndexToNumber;
