@@ -798,6 +798,26 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
   auto start = std::chrono::steady_clock::now();
   uint8_t header[ppuc::v2::kHeaderBytes];
   uint8_t buffer[ppuc::v2::kConfigAckFrameBytes];
+  auto readExact = [this](uint8_t* dst, size_t bytes) -> bool {
+    // libserialport may return fewer bytes than requested even with the
+    // blocking API. During Linux board configuration that caused partial
+    // config-ack frames to be parsed as failures, forcing retries.
+    size_t totalRead = 0;
+    while (totalRead < bytes) {
+      const int read = sp_blocking_read(
+          m_pSerialPort, dst + totalRead, bytes - totalRead,
+          RS485_COMM_SERIAL_READ_TIMEOUT);
+      if (read <= 0) {
+        if (m_debug) {
+          DebugPrintf("Timed out reading V2 config ack bytes (%zu/%zu read)",
+                      totalRead, bytes);
+        }
+        return false;
+      }
+      totalRead += static_cast<size_t>(read);
+    }
+    return true;
+  };
 
   while ((std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - start))
@@ -806,13 +826,16 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
       continue;
     }
 
-    sp_blocking_read(m_pSerialPort, &header[0], 1, RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (!readExact(&header[0], 1)) {
+      continue;
+    }
     if (header[0] != ppuc::v2::kSyncByte) {
       continue;
     }
 
-    sp_blocking_read(m_pSerialPort, &header[1], ppuc::v2::kHeaderBytes - 1,
-                     RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (!readExact(&header[1], ppuc::v2::kHeaderBytes - 1)) {
+      continue;
+    }
     const ppuc::v2::FrameType frameType = ppuc::v2::ExtractType(header[1]);
     if (frameType != ppuc::v2::kFrameConfigAck) {
       size_t payloadBytes = 0;
@@ -839,15 +862,19 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
       if (payloadBytes + ppuc::v2::kCrcBytes > sizeof(discard)) {
         return false;
       }
-      sp_blocking_read(m_pSerialPort, discard, payloadBytes + ppuc::v2::kCrcBytes,
-                       RS485_COMM_SERIAL_READ_TIMEOUT);
+      // Config startup is synchronous, but stale bytes from an earlier frame
+      // can still appear here. Drain the full frame before looking for the ack.
+      if (!readExact(discard, payloadBytes + ppuc::v2::kCrcBytes)) {
+        continue;
+      }
       continue;
     }
 
     memcpy(buffer, header, ppuc::v2::kHeaderBytes);
-    sp_blocking_read(m_pSerialPort, &buffer[ppuc::v2::kHeaderBytes],
-                     ppuc::v2::kConfigAckPayloadBytes + ppuc::v2::kCrcBytes,
-                     RS485_COMM_SERIAL_READ_TIMEOUT);
+    if (!readExact(&buffer[ppuc::v2::kHeaderBytes],
+                   ppuc::v2::kConfigAckPayloadBytes + ppuc::v2::kCrcBytes)) {
+      continue;
+    }
 
     const uint16_t receivedCrc =
         (static_cast<uint16_t>(buffer[ppuc::v2::kConfigAckFrameBytes - 2]) << 8) |
