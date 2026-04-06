@@ -1239,6 +1239,23 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
   uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes +
                  ppuc::v2::kMaxSwitchBytes +
                  ppuc::v2::kCrcBytes];
+  auto readExact = [this](uint8_t* dst, size_t bytes,
+                          uint32_t timeoutMs) -> bool {
+    // Match config-ack handling: libserialport may complete a blocking read
+    // with only part of the requested frame on Linux, which would otherwise
+    // turn a valid switch reply into a false CRC/sequence/epoch failure.
+    size_t totalRead = 0;
+    while (totalRead < bytes) {
+      const int read =
+          sp_blocking_read(m_pSerialPort, dst + totalRead, bytes - totalRead,
+                           timeoutMs);
+      if (read <= 0) {
+        return false;
+      }
+      totalRead += static_cast<size_t>(read);
+    }
+    return true;
+  };
 
   std::chrono::steady_clock::time_point start =
       std::chrono::steady_clock::now();
@@ -1251,13 +1268,16 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       continue;
     }
 
-    sp_blocking_read(m_pSerialPort, &header[0], 1, readTimeoutMs);
+    if (!readExact(&header[0], 1, readTimeoutMs)) {
+      continue;
+    }
     if (header[0] != ppuc::v2::kSyncByte) {
       continue;
     }
 
-    sp_blocking_read(m_pSerialPort, &header[1], ppuc::v2::kHeaderBytes - 1,
-                     readTimeoutMs);
+    if (!readExact(&header[1], ppuc::v2::kHeaderBytes - 1, readTimeoutMs)) {
+      continue;
+    }
     const ppuc::v2::FrameType frameType = ppuc::v2::ExtractType(header[1]);
     size_t payloadBytes = 0;
     if (frameType == ppuc::v2::kFrameSwitchState) {
@@ -1288,8 +1308,10 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     }
 
     memcpy(buffer, header, ppuc::v2::kHeaderBytes);
-    sp_blocking_read(m_pSerialPort, &buffer[ppuc::v2::kHeaderBytes],
-                     payloadBytes + ppuc::v2::kCrcBytes, readTimeoutMs);
+    if (!readExact(&buffer[ppuc::v2::kHeaderBytes],
+                   payloadBytes + ppuc::v2::kCrcBytes, readTimeoutMs)) {
+      continue;
+    }
 
     if (outNextBoard) {
       *outNextBoard = header[2];
