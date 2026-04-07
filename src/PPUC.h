@@ -55,6 +55,7 @@ class PPUCAPI PPUC {
   void SetLampState(int number, int state);
   void SetGIState(int string, int brightness);
   void SetSwitchState(int number, int state);
+  void TriggerEvent(uint8_t source, int number, int value);
   bool IsSwitchVirtualized(int number);
   bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
@@ -87,8 +88,6 @@ class PPUCAPI PPUC {
   bool m_forceHardReset = false;
   std::set<uint8_t> m_skippedBoards;
 
-  void SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
-                              uint8_t board, uint32_t port);
   void SendLedConfigBlock(const YAML::Node& items, uint32_t type, uint8_t board,
                           uint32_t port);
   bool AbortConfigurationEarly() const;

@@ -1,6 +1,7 @@
 #include "PPUC.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <set>
 #include <unordered_map>
@@ -174,38 +175,102 @@ bool PPUC::AbortConfigurationEarly() const {
   return m_pRS485Comm->ShouldAbortConfigurationEarly();
 }
 
-void PPUC::SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
-                                  uint8_t board, uint32_t port) {
-  if (items) {
-    for (YAML::Node n_item : items) {
-      if (AbortConfigurationEarly()) {
-        return;
-      }
-      uint8_t index = 0;
-      m_pRS485Comm->SendConfigEvent(
-          new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER, index++,
-                          (uint8_t)CONFIG_TOPIC_PORT, port));
-      m_pRS485Comm->SendConfigEvent(
-          new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER, index++,
-                          (uint8_t)CONFIG_TOPIC_TYPE, type));
-      std::string c_source = n_item["source"].as<std::string>();
-      uint32_t source = EVENT_SOURCE_SWITCH;
-      if (strcmp(c_source.c_str(), "S") == 0) {
-        source = EVENT_SOURCE_SOLENOID;
-      } else if (strcmp(c_source.c_str(), "L") == 0) {
-        source = EVENT_SOURCE_LIGHT;
-      }
-      m_pRS485Comm->SendConfigEvent(
-          new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER, index++,
-                          (uint8_t)CONFIG_TOPIC_SOURCE, source));
-      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-          board, (uint8_t)CONFIG_TOPIC_TRIGGER, index++,
-          (uint8_t)CONFIG_TOPIC_NUMBER, n_item["number"].as<uint32_t>()));
-      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
-          board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
-          (uint8_t)CONFIG_TOPIC_VALUE, n_item["value"].as<uint32_t>()));
-    }
+namespace {
+uint32_t ResolvePwmType(const std::string& type) {
+  if (type == "flasher") {
+    return PWM_TYPE_FLASHER;
   }
+  if (type == "lamp") {
+    return PWM_TYPE_LAMP;
+  }
+  if (type == "motor") {
+    return PWM_TYPE_MOTOR;
+  }
+  if (type == "shaker") {
+    return PWM_TYPE_SHAKER;
+  }
+  return PWM_TYPE_SOLENOID;
+}
+
+bool IsDecimalScalar(const std::string& value) {
+  return !value.empty() &&
+         std::all_of(value.begin(), value.end(), [](unsigned char c) {
+           return std::isdigit(c) != 0;
+         });
+}
+
+uint32_t ResolveLedEffectMode(const YAML::Node& node) {
+  const std::string value = node.as<std::string>();
+  if (IsDecimalScalar(value)) {
+    return node.as<uint32_t>();
+  }
+
+  static const std::unordered_map<std::string, uint32_t> kModes = {
+      {"static", 0},          {"blink", 1},          {"breath", 2},
+      {"color_wipe", 3},      {"scan", 13},          {"running_lights", 18},
+      {"twinkle_fade_random", 22},                   {"sparkle", 23},
+      {"strobe", 26},         {"chase_rainbow", 33}, {"running_color", 40},
+      {"running_random", 42}, {"larson_scanner", 43},{"comet", 44},
+      {"fireworks", 45},      {"fire_flicker", 48},  {"tricolor_chase", 54},
+      {"twinklefox", 55},     {"rain", 56},          {"heartbeat", 64},
+      {"multi_comet", 66},    {"popcorn", 68},       {"oscillator", 69},
+  };
+
+  const auto it = kModes.find(value);
+  if (it == kModes.end()) {
+    throw YAML::Exception(node.Mark(), "unknown LED effect '" + value + "'");
+  }
+  return it->second;
+}
+
+uint32_t ResolvePwmEffectMode(const YAML::Node& node) {
+  const std::string value = node.as<std::string>();
+  if (IsDecimalScalar(value)) {
+    return node.as<uint32_t>();
+  }
+
+  static const std::unordered_map<std::string, uint32_t> kModes = {
+      {"sine", PWM_EFFECT_SINE},
+      {"ramp_down_stop", PWM_EFFECT_RAMP_DOWN_STOP},
+      {"impulse", PWM_EFFECT_IMPULSE},
+  };
+
+  const auto it = kModes.find(value);
+  if (it == kModes.end()) {
+    throw YAML::Exception(node.Mark(), "unknown PWM effect '" + value + "'");
+  }
+  return it->second;
+}
+}  // namespace
+
+void SendNamedEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
+                                  uint32_t type, uint8_t board,
+                                  uint32_t port) {
+  if (!comm || !effectNode || !effectNode["name"]) {
+    return;
+  }
+
+  const uint32_t value = effectNode["value"] ? effectNode["value"].as<uint32_t>()
+                                             : 1u;
+  const uint32_t number =
+      HashNamedTriggerId(effectNode["name"].as<std::string>().c_str());
+
+  uint8_t index = 0;
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_PORT,
+                                        port));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_TYPE,
+                                        type));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_SOURCE,
+                                        EVENT_SOURCE_EFFECT));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_NUMBER,
+                                        number));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_VALUE,
+                                        value));
 }
 
 void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
@@ -534,14 +599,7 @@ bool PPUC::Connect() {
             n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
             index++, (uint8_t)CONFIG_TOPIC_FAST_SWITCH, fastSwitch));
         std::string c_type = n_pwmOutput["type"].as<std::string>();
-        uint32_t type = PWM_TYPE_SOLENOID;  // "coil"
-        if (strcmp(c_type.c_str(), "flasher") == 0) {
-          type = PWM_TYPE_FLASHER;
-        } else if (strcmp(c_type.c_str(), "lamp") == 0) {
-          type = PWM_TYPE_LAMP;
-        } else if (strcmp(c_type.c_str(), "motor") == 0) {
-          type = PWM_TYPE_MOTOR;
-        }
+        uint32_t type = ResolvePwmType(c_type);
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
             n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
             index++, (uint8_t)CONFIG_TOPIC_TYPE, type));
@@ -564,7 +622,7 @@ bool PPUC::Connect() {
                 new ConfigEvent(n_pwmOutput["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_PWM_EFFECT, index++,
                                 (uint8_t)CONFIG_TOPIC_EFFECT,
-                                n_pwm_effect["effect"].as<uint32_t>()));
+                                ResolvePwmEffectMode(n_pwm_effect["effect"])));
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_pwmOutput["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_PWM_EFFECT, index++,
@@ -598,10 +656,10 @@ bool PPUC::Connect() {
                                     ? 255
                                     : n_pwm_effect["repeat"].as<uint32_t>()));
 
-            SendTriggerConfigBlock(n_pwm_effect["trigger"],
-                                   CONFIG_TOPIC_PWM_EFFECT,
-                                   n_pwmOutput["board"].as<uint8_t>(),
-                                   n_pwmOutput["port"].as<uint32_t>());
+            SendNamedEffectTriggerConfig(
+                m_pRS485Comm, n_pwm_effect, CONFIG_TOPIC_PWM_EFFECT,
+                n_pwmOutput["board"].as<uint8_t>(),
+                n_pwmOutput["port"].as<uint32_t>());
           }
         }
 
@@ -709,7 +767,7 @@ bool PPUC::Connect() {
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
                                 (uint8_t)CONFIG_TOPIC_EFFECT,
-                                n_led_effect["effect"].as<uint32_t>()));
+                                ResolveLedEffectMode(n_led_effect["effect"])));
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
@@ -738,10 +796,10 @@ bool PPUC::Connect() {
                                     ? 255
                                     : n_led_effect["repeat"].as<uint32_t>()));
 
-            SendTriggerConfigBlock(n_led_effect["trigger"],
-                                   CONFIG_TOPIC_LED_EFFECT,
-                                   n_ledStripe["board"].as<uint8_t>(),
-                                   n_ledStripe["port"].as<uint32_t>());
+            SendNamedEffectTriggerConfig(
+                m_pRS485Comm, n_led_effect, CONFIG_TOPIC_LED_EFFECT,
+                n_ledStripe["board"].as<uint8_t>(),
+                n_ledStripe["port"].as<uint32_t>());
           }
         }
 
@@ -910,6 +968,11 @@ void PPUC::SetGIState(int string, int brightness) {
 void PPUC::SetSwitchState(int number, int state) {
   m_pRS485Comm->SetVirtualSwitchState(static_cast<uint16_t>(number),
                                       state == 0 ? 0 : 1);
+}
+
+void PPUC::TriggerEvent(uint8_t source, int number, int value) {
+  m_pRS485Comm->QueueEvent(new Event(source, static_cast<uint16_t>(number),
+                                     static_cast<uint8_t>(value)));
 }
 
 bool PPUC::IsSwitchVirtualized(int number) {

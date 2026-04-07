@@ -1551,8 +1551,27 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
 }
 
 bool RS485Comm::SendEvent(Event* event) {
-  (void)event;
-  return false;
+  if (!event || m_pSerialPort == NULL) {
+    return false;
+  }
+
+  uint8_t frame[ppuc::v2::kTriggerFrameBytes];
+  frame[0] = ppuc::v2::kSyncByte;
+  frame[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameTrigger,
+                                           ppuc::v2::kFlagNone);
+  frame[2] = ppuc::v2::kNoBoard;
+  frame[3] = m_sequence++;
+  frame[4] = m_epoch;
+  frame[5] = event->sourceId;
+  frame[6] = static_cast<uint8_t>((event->eventId >> 8) & 0xFFu);
+  frame[7] = static_cast<uint8_t>(event->eventId & 0xFFu);
+  frame[8] = event->value;
+  const uint16_t crc =
+      ppuc::v2::Crc16Ccitt(frame, ppuc::v2::kHeaderBytes +
+                                      ppuc::v2::kTriggerPayloadBytes);
+  frame[9] = static_cast<uint8_t>((crc >> 8) & 0xFFu);
+  frame[10] = static_cast<uint8_t>(crc & 0xFFu);
+  return WriteBytes("trigger frame", frame, sizeof(frame));
 }
 
 Event* RS485Comm::receiveEvent() {
