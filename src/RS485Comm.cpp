@@ -203,8 +203,10 @@ int64_t RS485Comm::SwitchReplyWindowUs() const {
 }
 
 uint32_t RS485Comm::SwitchReadTimeoutMs() const {
+  // Keep the total chain window generous, but avoid a disproportionately long
+  // per-read block when the configured board-side reply delay is very small.
   const uint32_t derivedMs =
-      static_cast<uint32_t>((m_switchReplyDelayUs + 999) / 1000) + 5;
+      static_cast<uint32_t>((m_switchReplyDelayUs + 999) / 1000) + 1;
   return std::max<uint32_t>(RS485_COMM_SERIAL_READ_TIMEOUT, derivedMs);
 }
 
