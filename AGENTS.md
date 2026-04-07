@@ -85,8 +85,8 @@ That matches the current firmware parser in `io-boards`.
 The effective `v2` startup flow in `PPUC::Connect()` is:
 
 1. Open serial port through `RS485Comm::Connect()`.
-2. Flush the port and send `ResetFrame`.
-3. Wait for board reset grace period.
+2. Flush the port and send `RestartFrame`.
+3. Wait briefly, then flush stale adapter bytes.
 4. Parse YAML config and emit `ConfigFrame`s for platform, switches, switch matrix, PWM outputs, LEDs, effects, and trigger rules.
 5. Require addressed boards to acknowledge config with `ConfigAck`.
 6. Register switch-capable boards and send `CONFIG_TOPIC_SWITCH_CHAIN` to define token handoff only across present switch boards.
@@ -97,6 +97,17 @@ The effective `v2` startup flow in `PPUC::Connect()` is:
 11. Wait 1 s.
 12. Queue initial GI.
 13. Start `RS485Comm::Run()` background loop.
+
+If the first startup pass misses config acknowledgments after `RestartFrame`,
+the host now logs that condition and performs one whole-startup retry after a
+hard `ResetFrame` before failing the connection.
+
+Normal shutdown flow:
+
+1. Stop the runtime thread.
+2. Send `RestartFrame` as a best-effort output-off/session-clear request.
+3. Drain/flush the serial adapter.
+4. Close the port.
 
 Startup is now `v2`-only on the wire. Presence detection comes from `ConfigAck`, not legacy probe packets.
 
@@ -174,7 +185,8 @@ Important current behavior:
 
 - Internal legacy-style `Event` objects still exist in `libppuc`.
 - `v2` frames are used for:
-  - reset
+  - soft restart
+  - hard reset
   - runtime setup
   - mappings
   - config transport
@@ -184,6 +196,16 @@ Important current behavior:
   - host-driven virtual switch updates
 
 When modifying transport behavior, prefer extending `v2` rather than reviving legacy RS485 packets.
+
+Control-frame semantics to preserve:
+
+- `RestartFrame`:
+  - normal host startup/shutdown path
+  - boards must clear config/runtime state and turn outputs off
+  - boards must stay alive on UART for immediate reconfiguration
+- `ResetFrame`:
+  - hard-reboot recovery path
+  - keep available for wedged-board recovery and debugging
 
 ## Known Risks
 

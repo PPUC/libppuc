@@ -41,13 +41,12 @@
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
 #define RS485_COMM_MAX_EVENTS_TO_SEND 32
-#define RS485_COMM_SWITCH_POLL_INTERVAL_MS 3
 #define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
-#define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 10
-#define RS485_COMM_PARSER_RESYNC_REPORT_THRESHOLD 3
-#define RS485_COMM_RESYNC_COOLDOWN_MS 5000
+#define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 3
+#define RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS 250
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
 #define RS485_COMM_CONFIG_ACK_RETRIES 3
+#define RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD 10
 
 struct VirtualSwitchBoardState {
   uint8_t board = ppuc::v2::kNoBoard;
@@ -66,6 +65,8 @@ class RS485Comm {
 
   bool Connect(const char* device);
   void Disconnect();
+  bool RestartBoards();
+  bool ResetBoards();
 
   void Run();
 
@@ -74,6 +75,7 @@ class RS485Comm {
   void SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config);
   bool SendSetupFrame();
   bool SendResetFrame();
+  bool SendRestartFrame();
   void SetMappings(const std::vector<uint16_t>& coils,
                    const std::vector<uint16_t>& lamps,
                    const std::vector<uint16_t>& switches);
@@ -86,6 +88,9 @@ class RS485Comm {
   bool IsBoardPresent(uint8_t board) const;
   bool IsBoardVirtualized(uint8_t board) const;
   void SetActiveSwitchBoards(const std::vector<uint8_t>& boards);
+  bool HadConfigurationFailure() const;
+  bool ShouldAbortConfigurationEarly() const;
+  std::vector<uint8_t> GetMissingConfiguredBoards() const;
 
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
@@ -118,10 +123,12 @@ class RS485Comm {
   void EnsureConfiguredBoardPresenceKnown();
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
+  void ClearQueuedEvents();
+  void ClearOutputState();
+  bool SendOutputsOffFrame();
   void DebugPrintf(const char* format, ...);
   void ErrorPrintf(const char* format, ...);
   int64_t SwitchReplyWindowUs() const;
-  int64_t OutputFrameIntervalMs() const;
   uint32_t SwitchReadTimeoutMs() const;
 
   PPUC_LogMessageCallback m_logMessageCallback = nullptr;
@@ -146,7 +153,6 @@ class RS485Comm {
   uint8_t m_lastOutputSequenceSent = 0;
   bool m_needSessionResync = false;
   uint8_t m_switchReplyMisses = 0;
-  uint8_t m_parserResyncReportsByBoard[RS485_COMM_MAX_BOARDS] = {0};
   uint32_t m_switchReplyDelayUs = 0;
   ppuc::v2::RuntimeConfig m_runtimeConfig;
   std::vector<uint16_t> m_coilIndexToNumber;
@@ -176,8 +182,12 @@ class RS485Comm {
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};
   std::atomic<uint32_t> m_cleanSwitchReplyChainCount{0};
-  std::chrono::steady_clock::time_point m_nextOutputFrameAt;
+  bool m_configFailed = false;
+  bool m_configEarlyAbortLogged = false;
+  uint8_t m_initialConfigAckMissStreak = 0;
+  uint8_t m_initialConfigAckMissesByBoard[RS485_COMM_MAX_BOARDS] = {0};
+  uint8_t m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
+  std::set<uint8_t> m_configAckFailedBoards;
   std::chrono::steady_clock::time_point m_nextSwitchPollAt;
-  std::chrono::steady_clock::time_point m_nextAllowedResyncAt;
   bool m_boardPresenceFinalized = false;
 };

@@ -112,9 +112,7 @@ RS485Comm::RS485Comm() {
   m_pSerialPort = NULL;
   m_pSerialPortConfig = NULL;
   m_runtimeConfig = ppuc::v2::RuntimeConfig();
-  m_nextOutputFrameAt = std::chrono::steady_clock::now();
   m_nextSwitchPollAt = std::chrono::steady_clock::now();
-  m_nextAllowedResyncAt = std::chrono::steady_clock::now();
 }
 
 RS485Comm::~RS485Comm() {
@@ -204,23 +202,9 @@ int64_t RS485Comm::SwitchReplyWindowUs() const {
   return baseUs + configuredDelayUs;
 }
 
-int64_t RS485Comm::OutputFrameIntervalMs() const {
-  const uint32_t boardCount = m_switchBoardCounter == 0 ? 1 : m_switchBoardCounter;
-  const size_t outputFrameBytes = ppuc::v2::OutputFrameBytes(m_runtimeConfig);
-  const size_t switchFrameBytes = ppuc::v2::SwitchFrameBytes(m_runtimeConfig);
-  const int64_t perBoardBudgetUs =
-      static_cast<int64_t>(m_switchReplyDelayUs) +
-      static_cast<int64_t>((switchFrameBytes * 10 * 1000000ull) / RS485_COMM_BAUD_RATE) +
-      500;
-  const int64_t hostFrameUs =
-      static_cast<int64_t>((outputFrameBytes * 10 * 1000000ull) / RS485_COMM_BAUD_RATE) + 500;
-  const int64_t totalUs = hostFrameUs + perBoardBudgetUs * static_cast<int64_t>(boardCount);
-  const int64_t totalMs = (totalUs + 999) / 1000;
-  return std::max<int64_t>(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS, totalMs);
-}
-
 uint32_t RS485Comm::SwitchReadTimeoutMs() const {
-  const uint32_t derivedMs = static_cast<uint32_t>((m_switchReplyDelayUs + 999) / 1000) + 5;
+  const uint32_t derivedMs =
+      static_cast<uint32_t>((m_switchReplyDelayUs + 999) / 1000) + 5;
   return std::max<uint32_t>(RS485_COMM_SERIAL_READ_TIMEOUT, derivedMs);
 }
 
@@ -257,9 +241,9 @@ bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
 
 void RS485Comm::Run() {
   m_stopRequested = false;
-  m_nextOutputFrameAt = std::chrono::steady_clock::now();
-  m_nextSwitchPollAt = std::chrono::steady_clock::now();
-  m_nextAllowedResyncAt = std::chrono::steady_clock::now();
+  m_nextSwitchPollAt =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS);
   m_pThread = new std::thread([this]() {
     LogMessage("RS485Comm run thread starting");
 
@@ -285,30 +269,25 @@ void RS485Comm::Run() {
         continue;
       }
 
-      if (m_needSessionResync &&
-          std::chrono::steady_clock::now() >= m_nextAllowedResyncAt) {
+      if (m_needSessionResync) {
         if (!ResyncSession()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
           continue;
         }
       }
 
-      auto now = std::chrono::steady_clock::now();
-      if (now < m_nextOutputFrameAt) {
-        std::this_thread::sleep_until(m_nextOutputFrameAt);
-        now = std::chrono::steady_clock::now();
-      }
-      m_nextOutputFrameAt =
-          now + std::chrono::milliseconds(OutputFrameIntervalMs());
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS));
 
+      const auto now = std::chrono::steady_clock::now();
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
         nextBoard = m_switchBoards[0];
-        m_nextSwitchPollAt =
-            now + std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_INTERVAL_MS);
       }
 
-      SendOutputStateFrame(nextBoard);
+      if (!SendOutputStateFrame(nextBoard)) {
+        continue;
+      }
       if (nextBoard != ppuc::v2::kNoBoard) {
         ReceiveSwitchStateChain(nextBoard);
       }
@@ -372,6 +351,25 @@ void RS485Comm::QueueEvent(Event* event) {
   delete event;
 }
 
+void RS485Comm::ClearQueuedEvents() {
+  std::lock_guard<std::mutex> lock(m_eventQueueMutex);
+  while (!m_events.empty()) {
+    delete m_events.front();
+    m_events.pop();
+  }
+}
+
+void RS485Comm::ClearOutputState() {
+  std::lock_guard<std::mutex> lock(m_stateMutex);
+  memset(m_coilBitmap, 0, sizeof(m_coilBitmap));
+  memset(m_lampBitmap, 0, sizeof(m_lampBitmap));
+  memset(m_giLevels, 0, sizeof(m_giLevels));
+}
+
+bool RS485Comm::SendOutputsOffFrame() {
+  return SendOutputStateFrame(ppuc::v2::kNoBoard);
+}
+
 void RS485Comm::Disconnect() {
   m_stopRequested = true;
 
@@ -385,11 +383,21 @@ void RS485Comm::Disconnect() {
     return;
   }
 
+  // Once the worker thread is down, no queued state changes will be transmitted
+  // anymore. Drop them and send a deterministic all-off snapshot instead.
+  ClearQueuedEvents();
+  ClearOutputState();
+  SendOutputsOffFrame();
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  SendOutputsOffFrame();
+  sp_drain(m_pSerialPort);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
   // Some USB-RS485 adapters/drivers keep modem-control/flow-control state
   // across close/open cycles. Drain and explicitly deassert those lines before
   // closing so the next run starts from a neutral adapter state.
   sp_drain(m_pSerialPort);
-  sp_flush(m_pSerialPort, SP_BUF_BOTH);
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
   sp_set_flowcontrol(m_pSerialPort, SP_FLOWCONTROL_NONE);
   sp_set_rts(m_pSerialPort, SP_RTS_OFF);
   sp_set_dtr(m_pSerialPort, SP_DTR_OFF);
@@ -405,6 +413,50 @@ void RS485Comm::Disconnect() {
   sp_close(m_pSerialPort);
   sp_free_port(m_pSerialPort);
   m_pSerialPort = NULL;
+}
+
+bool RS485Comm::RestartBoards() {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  m_configFailed = false;
+  m_configEarlyAbortLogged = false;
+  m_initialConfigAckMissStreak = 0;
+  memset(m_initialConfigAckMissesByBoard, 0,
+         sizeof(m_initialConfigAckMissesByBoard));
+  m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
+  m_configAckFailedBoards.clear();
+  if (!SendRestartFrame()) {
+    return false;
+  }
+  sp_drain(m_pSerialPort);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  return true;
+}
+
+bool RS485Comm::ResetBoards() {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  m_configFailed = false;
+  m_configEarlyAbortLogged = false;
+  m_initialConfigAckMissStreak = 0;
+  memset(m_initialConfigAckMissesByBoard, 0,
+         sizeof(m_initialConfigAckMissesByBoard));
+  m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
+  m_configAckFailedBoards.clear();
+  if (!SendResetFrame()) {
+    return false;
+  }
+  std::this_thread::sleep_for(
+      std::chrono::milliseconds(WAIT_FOR_IO_BOARD_RESET));
+  sp_flush(m_pSerialPort, SP_BUF_BOTH);
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  return true;
 }
 
 bool RS485Comm::Connect(const char* pDevice) {
@@ -501,21 +553,16 @@ bool RS485Comm::Connect(const char* pDevice) {
   m_epoch = 1;
   m_sequence = 0;
   m_lastOutputSequenceSent = 0;
-  memset(m_parserResyncReportsByBoard, 0, sizeof(m_parserResyncReportsByBoard));
   memset(m_activeBoards, 0, sizeof(m_activeBoards));
   m_presentBoards.clear();
   m_boardPresenceFinalized = false;
-
-  // Reset boards before sending a fresh configuration. This handles
-  // restart-without-power-cycle scenarios.
-  SendResetFrame();
-  std::this_thread::sleep_for(
-      std::chrono::milliseconds(WAIT_FOR_IO_BOARD_RESET));
-  // Boards can finish rebooting slightly before the USB-RS485 adapter and host
-  // driver have fully drained stale bytes. Start configuration from a clean
-  // RX/TX state after the reset window closes.
-  sp_flush(m_pSerialPort, SP_BUF_BOTH);
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  m_configFailed = false;
+  m_configEarlyAbortLogged = false;
+  m_initialConfigAckMissStreak = 0;
+  memset(m_initialConfigAckMissesByBoard, 0,
+         sizeof(m_initialConfigAckMissesByBoard));
+  m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
+  m_configAckFailedBoards.clear();
 
   return true;
 }
@@ -611,6 +658,33 @@ bool RS485Comm::IsBoardPresent(uint8_t board) const {
 bool RS485Comm::IsBoardVirtualized(uint8_t board) const {
   const_cast<RS485Comm*>(this)->EnsureConfiguredBoardPresenceKnown();
   return m_virtualSwitchBoards.find(board) != m_virtualSwitchBoards.end();
+}
+
+bool RS485Comm::HadConfigurationFailure() const { return m_configFailed; }
+
+bool RS485Comm::ShouldAbortConfigurationEarly() const {
+  if (m_configEarlyAbortBoard != ppuc::v2::kNoBoard) {
+    return true;
+  }
+
+  return m_presentBoards.empty() &&
+         m_initialConfigAckMissStreak >=
+             RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD;
+}
+
+std::vector<uint8_t> RS485Comm::GetMissingConfiguredBoards() const {
+  std::vector<uint8_t> missingBoards;
+  missingBoards.reserve(m_configuredBoards.size());
+  for (const uint8_t board : m_configuredBoards) {
+    if (m_skippedBoards.find(board) != m_skippedBoards.end()) {
+      continue;
+    }
+    if (m_presentBoards.find(board) != m_presentBoards.end()) {
+      continue;
+    }
+    missingBoards.push_back(board);
+  }
+  return missingBoards;
 }
 
 void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
@@ -722,13 +796,18 @@ uint32_t RS485Comm::GetCleanSwitchReplyChainCount() const {
 }
 
 bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
-  // Wait a bit to not exceed the output buffer in case of large configurations.
-  std::this_thread::sleep_for(std::chrono::milliseconds(5));
-
   if (m_pSerialPort == NULL || !event) {
     delete event;
     return false;
   }
+
+  if (ShouldAbortConfigurationEarly()) {
+    delete event;
+    return false;
+  }
+
+  // Wait a bit to not exceed the output buffer in case of large configurations.
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
   uint8_t buffer[ppuc::v2::kConfigFrameBytes];
   buffer[0] = ppuc::v2::kSyncByte;
@@ -773,6 +852,10 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
     }
 
     if (ReceiveConfigAck(buffer[5], buffer[6], buffer[7], buffer[8])) {
+      m_initialConfigAckMissStreak = 0;
+      if (buffer[5] < RS485_COMM_MAX_BOARDS) {
+        m_initialConfigAckMissesByBoard[buffer[5]] = 0;
+      }
       m_presentBoards.insert(buffer[5]);
       if (buffer[5] < RS485_COMM_MAX_BOARDS) {
         m_activeBoards[buffer[5]] = true;
@@ -786,6 +869,36 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
 
   ErrorPrintf("Missing V2 config ack: board=%u topic=%u index=%u key=%u",
               buffer[5], buffer[6], buffer[7], buffer[8]);
+  m_configFailed = true;
+  if (m_presentBoards.empty() &&
+      m_initialConfigAckMissStreak <
+          RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD) {
+    ++m_initialConfigAckMissStreak;
+  }
+  if (buffer[5] < RS485_COMM_MAX_BOARDS &&
+      m_initialConfigAckMissesByBoard[buffer[5]] <
+          RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD) {
+    ++m_initialConfigAckMissesByBoard[buffer[5]];
+    if (m_presentBoards.find(buffer[5]) == m_presentBoards.end() &&
+        m_initialConfigAckMissesByBoard[buffer[5]] >=
+            RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD) {
+      m_configEarlyAbortBoard = buffer[5];
+    }
+  }
+  m_configAckFailedBoards.insert(buffer[5]);
+  if (!m_configEarlyAbortLogged && ShouldAbortConfigurationEarly()) {
+    if (m_configEarlyAbortBoard != ppuc::v2::kNoBoard) {
+      printf(
+          "PPUC: board %u missed its first %u config ACKs; aborting startup attempt early.\n",
+          static_cast<unsigned>(m_configEarlyAbortBoard),
+          static_cast<unsigned>(RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD));
+    } else {
+      printf(
+          "PPUC: the first %u config frames received no ACKs; aborting startup attempt early.\n",
+          static_cast<unsigned>(RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD));
+    }
+    m_configEarlyAbortLogged = true;
+  }
   return false;
 }
 
@@ -849,6 +962,7 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
         case ppuc::v2::kFrameConfig:
           payloadBytes = ppuc::v2::kConfigPayloadBytes;
           break;
+        case ppuc::v2::kFrameRestart:
         case ppuc::v2::kFrameReset:
         case ppuc::v2::kFrameHeartbeat:
         case ppuc::v2::kFrameError:
@@ -1081,10 +1195,9 @@ bool RS485Comm::ResyncSession() {
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   m_needSessionResync = false;
-  memset(m_parserResyncReportsByBoard, 0, sizeof(m_parserResyncReportsByBoard));
-  m_nextAllowedResyncAt = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(
-                              RS485_COMM_RESYNC_COOLDOWN_MS);
+  m_nextSwitchPollAt =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS);
   return true;
 }
 
@@ -1107,6 +1220,32 @@ bool RS485Comm::SendResetFrame() {
   if (WriteBytes("ResetFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
       DebugPrintf("Sent V2 ResetFrame seq=%u", buffer[3]);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::SendRestartFrame() {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  uint8_t buffer[ppuc::v2::kRestartFrameBytes];
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameRestart,
+                                            ppuc::v2::kFlagNone);
+  buffer[2] = ppuc::v2::kNoBoard;
+  buffer[3] = m_sequence++;
+  buffer[4] = m_epoch;
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
+  buffer[5] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[6] = static_cast<uint8_t>(crc & 0xff);
+
+  if (WriteBytes("RestartFrame", buffer, sizeof(buffer))) {
+    if (m_debug) {
+      DebugPrintf("Sent V2 RestartFrame seq=%u", buffer[3]);
     }
     return true;
   }
@@ -1256,21 +1395,39 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     }
     return true;
   };
-
   std::chrono::steady_clock::time_point start =
       std::chrono::steady_clock::now();
   const int64_t switchReplyWindowUs = SwitchReplyWindowUs();
   const uint32_t readTimeoutMs = SwitchReadTimeoutMs();
+  auto readOneByteWithinWindow =
+      [this, &start, switchReplyWindowUs](uint8_t* dst) -> bool {
+    while (true) {
+      const int64_t elapsedUs =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - start)
+              .count();
+      if (elapsedUs >= switchReplyWindowUs) {
+        return false;
+      }
+
+      const int64_t remainingUs = switchReplyWindowUs - elapsedUs;
+      const uint32_t timeoutMs = static_cast<uint32_t>(
+          std::max<int64_t>(1, (remainingUs + 999) / 1000));
+      const int read = sp_blocking_read(m_pSerialPort, dst, 1, timeoutMs);
+      if (read > 0) {
+        return true;
+      }
+    }
+  };
+  bool sawAnyReplyBytes = false;
   while ((std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - start))
              .count() < switchReplyWindowUs) {
-    if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
-      continue;
+    if (!readOneByteWithinWindow(&header[0])) {
+      break;
     }
+    sawAnyReplyBytes = true;
 
-    if (!readExact(&header[0], 1, readTimeoutMs)) {
-      continue;
-    }
     if (header[0] != ppuc::v2::kSyncByte) {
       continue;
     }
@@ -1328,20 +1485,20 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     if (epochSeen != m_epoch) {
       ErrorPrintf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
                   expectedBoard, epochSeen, m_epoch);
-      return false;
+      m_needSessionResync = true;
     }
     if (lastHostSequenceSeen != m_lastOutputSequenceSent) {
       ErrorPrintf(
           "V2 switch reply sequence mismatch: board=%u seen=%u expected=%u",
           expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
-      return false;
+      m_needSessionResync = true;
     }
     if ((statusFlags & (ppuc::v2::kStatusNeedsSetup |
                         ppuc::v2::kStatusMappingIncomplete |
                         ppuc::v2::kStatusSequenceGap)) != 0) {
       ErrorPrintf("V2 switch reply requested resync: board=%u flags=0x%02X",
                   expectedBoard, statusFlags);
-      return false;
+      m_needSessionResync = true;
     }
 
     if (parserResynced || switchOverflow) {
@@ -1373,34 +1530,21 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
                     expectedBoard);
       }
     }
-
-    if (expectedBoard < RS485_COMM_MAX_BOARDS) {
-      if (parserResynced) {
-        const uint8_t reportCount = ++m_parserResyncReportsByBoard[expectedBoard];
-        if (reportCount >= RS485_COMM_PARSER_RESYNC_REPORT_THRESHOLD) {
-          ErrorPrintf(
-              "Repeated V2 parser-resynced reports from board %u (%u valid replies); scheduling soft session resync",
-              expectedBoard, reportCount);
-          m_needSessionResync = true;
-          m_parserResyncReportsByBoard[expectedBoard] = 0;
-        } else {
-          ErrorPrintf("Board %u reported %s (%u/%u before soft resync)",
-                      expectedBoard,
-                      SwitchStatusFlagName(ppuc::v2::kStatusParserResynced),
-                      reportCount, RS485_COMM_PARSER_RESYNC_REPORT_THRESHOLD);
-        }
-      } else {
-        m_parserResyncReportsByBoard[expectedBoard] = 0;
-      }
-    }
     return true;
   }
 
   if (m_debug || m_debugErrors) {
-    ErrorPrintf("Timed out waiting for V2 switch reply for board token %u",
-                expectedBoard);
+    ErrorPrintf(
+        "Timed out waiting for V2 switch reply for board token %u (windowUs=%lld readTimeoutMs=%u sawBytes=%s inputWaiting=%d lastOutputSeq=%u epoch=%u)",
+        expectedBoard, static_cast<long long>(switchReplyWindowUs),
+        static_cast<unsigned>(readTimeoutMs), sawAnyReplyBytes ? "yes" : "no",
+        static_cast<int>(sp_input_waiting(m_pSerialPort)),
+        static_cast<unsigned>(m_lastOutputSequenceSent),
+        static_cast<unsigned>(m_epoch));
   }
-  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+  if (sp_input_waiting(m_pSerialPort) <= 0) {
+    sp_flush(m_pSerialPort, SP_BUF_INPUT);
+  }
   return false;
 }
 

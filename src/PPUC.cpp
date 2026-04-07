@@ -156,6 +156,10 @@ void PPUC::SetDisableFastFlipForTests(bool disableFastFlipForTests) {
   m_disableFastFlipForTests = disableFastFlipForTests;
 }
 
+void PPUC::SetForceHardReset(bool forceHardReset) {
+  m_forceHardReset = forceHardReset;
+}
+
 bool PPUC::GetDebug() { return m_debug; }
 
 void PPUC::SetRom(const char* rom) { strcpy(m_rom, rom); }
@@ -166,10 +170,17 @@ void PPUC::SetSerial(const char* serial) { strcpy(m_serial, serial); }
 
 const char* PPUC::GetSerial() { return m_serial; }
 
+bool PPUC::AbortConfigurationEarly() const {
+  return m_pRS485Comm->ShouldAbortConfigurationEarly();
+}
+
 void PPUC::SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
                                   uint8_t board, uint32_t port) {
   if (items) {
     for (YAML::Node n_item : items) {
+      if (AbortConfigurationEarly()) {
+        return;
+      }
       uint8_t index = 0;
       m_pRS485Comm->SendConfigEvent(
           new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER, index++,
@@ -201,6 +212,9 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
                               uint8_t board, uint32_t port) {
   if (items) {
     for (YAML::Node n_item : items) {
+      if (AbortConfigurationEarly()) {
+        return;
+      }
       if (m_debug) {
         // @todo user logger
         printf("Description: %s\n",
@@ -238,7 +252,15 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
 }
 
 bool PPUC::Connect() {
-  if (m_pRS485Comm->Connect(m_serial)) {
+  if (!m_pRS485Comm->Connect(m_serial)) {
+    return false;
+  }
+
+  auto startupAttempt = [this]() -> bool {
+    m_coils.clear();
+    m_lamps.clear();
+    m_switches.clear();
+
     auto isSkippedBoard = [this](uint8_t boardNumber) {
       return m_skippedBoards.count(boardNumber) != 0;
     };
@@ -283,10 +305,10 @@ bool PPUC::Connect() {
       }
     }
 
-    // The game-on relay is a logical control solenoid consumed by board-local
-    // high-power gating even when it is not part of the normal playfield coil
-    // list. Keep it in the runtime bitmap mapping so host-side SetSolenoidState
-    // can actually assert high power during tests and startup.
+    if (AbortConfigurationEarly()) {
+      return false;
+    }
+
     coilNumbers.insert(m_gameOnSolenoid);
 
     const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
@@ -424,6 +446,10 @@ bool PPUC::Connect() {
       }
     }
 
+    if (AbortConfigurationEarly()) {
+      return false;
+    }
+
     // Send switch configuration to I/O boards
     if (switches) {
       for (YAML::Node n_switch : switches) {
@@ -454,6 +480,10 @@ bool PPUC::Connect() {
             n_switch["number"].as<uint8_t>(),
             n_switch["description"].as<std::string>()));
       }
+    }
+
+    if (AbortConfigurationEarly()) {
+      return false;
     }
 
     // Send PWM configuration to I/O boards
@@ -581,6 +611,10 @@ bool PPUC::Connect() {
                      n_pwmOutput["number"].as<uint8_t>(),
                      n_pwmOutput["description"].as<std::string>()));
       }
+    }
+
+    if (AbortConfigurationEarly()) {
+      return false;
     }
 
     // Send LED configuration to I/O boards
@@ -723,8 +757,15 @@ bool PPUC::Connect() {
       }
     }
 
-    m_pRS485Comm->FinalizeConfiguredBoardPresence();
+    if (AbortConfigurationEarly()) {
+      return false;
+    }
 
+    if (m_pRS485Comm->HadConfigurationFailure()) {
+      return false;
+    }
+
+    m_pRS485Comm->FinalizeConfiguredBoardPresence();
     m_pRS485Comm->SetActiveSwitchBoards(switchBoards);
 
     // Configure token-ring handoff across the full logical switch-board
@@ -747,10 +788,22 @@ bool PPUC::Connect() {
           (uint8_t)CONFIG_TOPIC_SWITCH_REPLY_DELAY_US, m_switchReplyDelayUs));
     }
 
+    if (AbortConfigurationEarly()) {
+      return false;
+    }
+
+    if (m_pRS485Comm->HadConfigurationFailure()) {
+      return false;
+    }
+
     // Start the V2 runtime only after all board-local config was applied.
-    m_pRS485Comm->SendSetupFrame();
+    if (!m_pRS485Comm->SendSetupFrame()) {
+      return false;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    m_pRS485Comm->SendMappingFrames();
+    if (!m_pRS485Comm->SendMappingFrames()) {
+      return false;
+    }
 
     // Wait before continuing.
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -761,10 +814,70 @@ bool PPUC::Connect() {
     }
 
     m_pRS485Comm->Run();
+    return true;
+  };
 
+  if (m_forceHardReset) {
+    printf("PPUC: starting board configuration using forced hard reset.\n");
+    if (!m_pRS485Comm->ResetBoards()) {
+      printf("PPUC: forced hard reset could not be started; startup aborted.\n");
+      return false;
+    }
+    if (startupAttempt()) {
+      return true;
+    }
+    const std::vector<uint8_t> missingBoards =
+        m_pRS485Comm->GetMissingConfiguredBoards();
+    printf("PPUC: forced hard reset startup still failed; startup aborted.\n");
+    if (missingBoards.empty()) {
+      printf(
+          "PPUC: one or more boards still did not acknowledge configuration.\n");
+    } else {
+      printf("PPUC: boards without config ACK:");
+      for (const uint8_t board : missingBoards) {
+        printf(" %u", board);
+      }
+      printf("\n");
+    }
+    printf(
+        "PPUC: press the reset button on these boards or power cycle the machine.\n");
+    printf(
+        "PPUC: if this is intentional, start again with --skip-boards for the missing boards.\n");
+    return false;
+  }
+
+  printf("PPUC: starting board configuration using soft restart.\n");
+  if (!m_pRS485Comm->RestartBoards()) {
+    printf("PPUC: soft restart could not be started; escalating to hard reset and retrying once.\n");
+  } else if (startupAttempt()) {
+    return true;
+  } else {
+    printf("PPUC: configuration after soft restart missed board ACKs; escalating to hard reset and retrying once.\n");
+  }
+  if (!m_pRS485Comm->ResetBoards()) {
+    printf("PPUC: hard reset recovery could not be started; startup aborted.\n");
+    return false;
+  }
+
+  if (startupAttempt()) {
+    printf("PPUC: hard reset retry succeeded.\n");
     return true;
   }
 
+  const std::vector<uint8_t> missingBoards =
+      m_pRS485Comm->GetMissingConfiguredBoards();
+  printf("PPUC: hard reset retry still failed; startup aborted.\n");
+  if (missingBoards.empty()) {
+    printf("PPUC: one or more boards still did not acknowledge configuration.\n");
+  } else {
+    printf("PPUC: boards without config ACK:");
+    for (const uint8_t board : missingBoards) {
+      printf(" %u", board);
+    }
+    printf("\n");
+  }
+  printf("PPUC: press the reset button on these boards or power cycle the machine.\n");
+  printf("PPUC: if this is intentional, start again with --skip-boards for the missing boards.\n");
   return false;
 }
 
