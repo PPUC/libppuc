@@ -906,25 +906,16 @@ bool PPUC::Connect() {
 
   printf("PPUC: starting board configuration using soft restart.\n");
   if (!m_pRS485Comm->RestartBoards()) {
-    printf("PPUC: soft restart could not be started; escalating to hard reset and retrying once.\n");
-  } else if (startupAttempt()) {
-    return true;
-  } else {
-    printf("PPUC: configuration after soft restart missed board ACKs; escalating to hard reset and retrying once.\n");
-  }
-  if (!m_pRS485Comm->ResetBoards()) {
-    printf("PPUC: hard reset recovery could not be started; startup aborted.\n");
+    printf("PPUC: soft restart could not be started; startup aborted.\n");
     return false;
   }
-
   if (startupAttempt()) {
-    printf("PPUC: hard reset retry succeeded.\n");
     return true;
   }
 
   const std::vector<uint8_t> missingBoards =
       m_pRS485Comm->GetMissingConfiguredBoards();
-  printf("PPUC: hard reset retry still failed; startup aborted.\n");
+  printf("PPUC: soft restart startup failed; startup aborted.\n");
   if (missingBoards.empty()) {
     printf("PPUC: one or more boards still did not acknowledge configuration.\n");
   } else {
@@ -935,6 +926,7 @@ bool PPUC::Connect() {
     printf("\n");
   }
   printf("PPUC: press the reset button on these boards or power cycle the machine.\n");
+  printf("PPUC: if you want to force a board reboot first, start again with --hard-reset.\n");
   printf("PPUC: if this is intentional, start again with --skip-boards for the missing boards.\n");
   return false;
 }

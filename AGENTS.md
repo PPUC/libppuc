@@ -98,9 +98,9 @@ The effective `v2` startup flow in `PPUC::Connect()` is:
 12. Queue initial GI.
 13. Start `RS485Comm::Run()` background loop.
 
-If the first startup pass misses config acknowledgments after `RestartFrame`,
-the host now logs that condition and performs one whole-startup retry after a
-hard `ResetFrame` before failing the connection.
+If startup after `RestartFrame` misses config acknowledgments, the host now
+logs that condition and fails the connection. A hard `ResetFrame` retry is no
+longer automatic; it is only used when the caller explicitly forces hard reset.
 
 Normal shutdown flow:
 
