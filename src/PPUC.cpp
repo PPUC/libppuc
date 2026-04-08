@@ -368,6 +368,10 @@ bool PPUC::Connect() {
         m_pRS485Comm->RegisterSwitchBoard(boardNumber);
         switchBoards.push_back(boardNumber);
       }
+
+      if (AbortConfigurationEarly()) {
+        return false;
+      }
     }
 
     if (AbortConfigurationEarly()) {
@@ -544,6 +548,10 @@ bool PPUC::Connect() {
             n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
             n_switch["number"].as<uint8_t>(),
             n_switch["description"].as<std::string>()));
+
+        if (AbortConfigurationEarly()) {
+          return false;
+        }
       }
     }
 
@@ -660,6 +668,10 @@ bool PPUC::Connect() {
                 m_pRS485Comm, n_pwm_effect, CONFIG_TOPIC_PWM_EFFECT,
                 n_pwmOutput["board"].as<uint8_t>(),
                 n_pwmOutput["port"].as<uint32_t>());
+
+            if (AbortConfigurationEarly()) {
+              return false;
+            }
           }
         }
 
@@ -668,6 +680,10 @@ bool PPUC::Connect() {
                      n_pwmOutput["port"].as<uint8_t>(), (uint8_t)type,
                      n_pwmOutput["number"].as<uint8_t>(),
                      n_pwmOutput["description"].as<std::string>()));
+
+        if (AbortConfigurationEarly()) {
+          return false;
+        }
       }
     }
 
@@ -733,6 +749,10 @@ bool PPUC::Connect() {
                 n_ledStripe["board"].as<uint8_t>(),
                 (uint8_t)CONFIG_TOPIC_LED_SEGMENT, index++,
                 (uint8_t)CONFIG_TOPIC_TO, n_segment["to"].as<uint32_t>()));
+
+            if (AbortConfigurationEarly()) {
+              return false;
+            }
           }
         }
 
@@ -800,6 +820,10 @@ bool PPUC::Connect() {
                 m_pRS485Comm, n_led_effect, CONFIG_TOPIC_LED_EFFECT,
                 n_ledStripe["board"].as<uint8_t>(),
                 n_ledStripe["port"].as<uint32_t>());
+
+            if (AbortConfigurationEarly()) {
+              return false;
+            }
           }
         }
 
@@ -812,6 +836,10 @@ bool PPUC::Connect() {
         SendLedConfigBlock(n_ledStripe["gi"], LED_TYPE_GI,
                            n_ledStripe["board"].as<uint8_t>(),
                            n_ledStripe["port"].as<uint32_t>());
+
+        if (AbortConfigurationEarly()) {
+          return false;
+        }
       }
     }
 

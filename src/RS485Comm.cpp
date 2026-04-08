@@ -437,9 +437,9 @@ bool RS485Comm::RestartBoards() {
   // teardown work (for example WS2812/effects state on the first board on the
   // bus) may need a little longer before it can reliably acknowledge the first
   // config frame of the next session.
-  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
   return true;
 }
 
