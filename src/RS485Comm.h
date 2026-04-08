@@ -119,7 +119,8 @@ class RS485Comm {
                               bool* outHadState);
   uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
   void ReceiveSwitchStateChain(uint8_t firstBoard);
-  void ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes);
+  void ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap, size_t bytes);
+  void RebuildSwitchOwnershipMasks();
   void EnsureConfiguredBoardPresenceKnown();
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
@@ -141,6 +142,8 @@ class RS485Comm {
   std::set<uint8_t> m_presentBoards;
   std::set<uint8_t> m_skippedBoards;
   std::unordered_map<uint8_t, std::vector<uint16_t>> m_switchNumbersByBoard;
+  uint8_t m_switchOwnershipMaskByBoard[RS485_COMM_MAX_BOARDS]
+                                      [ppuc::v2::kMaxSwitchBytes] = {{0}};
   std::unordered_map<uint8_t, VirtualSwitchBoardState> m_virtualSwitchBoards;
   std::unordered_map<uint16_t, uint8_t> m_virtualSwitchOwnerByNumber;
   bool m_activeBoards[RS485_COMM_MAX_BOARDS] = {false};

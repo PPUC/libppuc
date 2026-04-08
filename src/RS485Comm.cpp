@@ -593,6 +593,7 @@ void RS485Comm::SetConfiguredBoards(const std::vector<uint8_t>& boards) {
 void RS485Comm::SetSwitchNumbersByBoard(
     const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard) {
   m_switchNumbersByBoard = switchesByBoard;
+  RebuildSwitchOwnershipMasks();
   m_boardPresenceFinalized = false;
 }
 
@@ -704,6 +705,23 @@ void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
   }
 }
 
+void RS485Comm::RebuildSwitchOwnershipMasks() {
+  memset(m_switchOwnershipMaskByBoard, 0, sizeof(m_switchOwnershipMaskByBoard));
+  for (const auto& [board, switchNumbers] : m_switchNumbersByBoard) {
+    if (board >= RS485_COMM_MAX_BOARDS) {
+      continue;
+    }
+    for (const uint16_t switchNumber : switchNumbers) {
+      const auto it = m_switchNumberToIndex.find(switchNumber);
+      if (it == m_switchNumberToIndex.end()) {
+        continue;
+      }
+      ppuc::v2::SetBitmapBit(m_switchOwnershipMaskByBoard[board], it->second,
+                             true);
+    }
+  }
+}
+
 bool RS485Comm::SetVirtualSwitchState(uint16_t number, uint8_t state) {
   EnsureConfiguredBoardPresenceKnown();
 
@@ -780,6 +798,8 @@ void RS485Comm::SetMappings(const std::vector<uint16_t>& coils,
   for (uint16_t i = 0; i < m_switchIndexToNumber.size(); ++i) {
     m_switchNumberToIndex[m_switchIndexToNumber[i]] = i;
   }
+
+  RebuildSwitchOwnershipMasks();
 }
 
 PPUCSwitchState* RS485Comm::GetNextSwitchState() {
@@ -1354,8 +1374,15 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
   return WriteBytes("OutputStateFrame", buffer, frameBytes);
 }
 
-void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
+void RS485Comm::ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap,
+                                      size_t bytes) {
+  const uint8_t* ownershipMask =
+      board < RS485_COMM_MAX_BOARDS ? m_switchOwnershipMaskByBoard[board]
+                                    : nullptr;
   for (uint16_t n = 0; n < m_runtimeConfig.switchBits; ++n) {
+    if (ownershipMask && !ppuc::v2::GetBitmapBit(ownershipMask, n)) {
+      continue;
+    }
     const bool oldState = ppuc::v2::GetBitmapBit(m_switchBitmap, n);
     const bool newState = ppuc::v2::GetBitmapBit(bitmap, n);
     if (oldState != newState) {
@@ -1368,7 +1395,16 @@ void RS485Comm::ApplySwitchBitmapDiff(const uint8_t* bitmap, size_t bytes) {
     }
   }
 
-  memcpy(m_switchBitmap, bitmap, bytes);
+  if (!ownershipMask) {
+    memcpy(m_switchBitmap, bitmap, bytes);
+    return;
+  }
+
+  for (size_t i = 0; i < bytes; ++i) {
+    const uint8_t mask = ownershipMask[i];
+    m_switchBitmap[i] = static_cast<uint8_t>((m_switchBitmap[i] & ~mask) |
+                                             (bitmap[i] & mask));
+  }
 }
 
 bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
@@ -1529,6 +1565,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
 
     if (frameType == ppuc::v2::kFrameSwitchState) {
       ApplySwitchBitmapDiff(
+          expectedBoard,
           &buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes],
           switchBytes);
       if (m_debug) {
