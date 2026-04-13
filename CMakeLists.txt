@@ -5,12 +5,14 @@ set(ARCH "x64" CACHE STRING "Arch")
 
 option(BUILD_SHARED "Option to build shared library" ON)
 option(BUILD_STATIC "Option to build static library" ON)
+option(ENABLE_SANITIZERS "Enable address/undefined sanitizers for supported Debug builds" OFF)
 
 message(STATUS "PLATFORM: ${PLATFORM}")
 message(STATUS "ARCH: ${ARCH}")
 
 message(STATUS "BUILD_SHARED: ${BUILD_SHARED}")
 message(STATUS "BUILD_STATIC: ${BUILD_STATIC}")
+message(STATUS "ENABLE_SANITIZERS: ${ENABLE_SANITIZERS}")
 
 file(READ src/PPUC.h version)
 string(REGEX MATCH "PPUC_VERSION_MAJOR[ ]+([0-9]+)" _tmp ${version})
@@ -28,10 +30,6 @@ if(PLATFORM STREQUAL "win")
       add_compile_definitions(WIN32)
    endif()
 elseif(PLATFORM STREQUAL "macos")
-   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
-      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -g")
-   endif()
    if (ARCH STREQUAL "arm64")
       set(CMAKE_OSX_ARCHITECTURES arm64)
    elseif(ARCH STREQUAL "x64")
@@ -49,6 +47,14 @@ set(CMAKE_C_STANDARD 99)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+   if(ENABLE_SANITIZERS AND (PLATFORM STREQUAL "macos" OR PLATFORM STREQUAL "linux"))
+      set(SANITIZER_FLAGS -fsanitize=address,undefined)
+      add_compile_options(${SANITIZER_FLAGS} -fno-omit-frame-pointer -g)
+      add_link_options(${SANITIZER_FLAGS})
+   endif()
+endif()
 
 set(PPUC_SOURCES
    src/RS485Comm.h
