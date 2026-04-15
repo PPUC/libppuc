@@ -29,6 +29,8 @@ if(PLATFORM STREQUAL "win")
    if(ARCH STREQUAL "x86")
       add_compile_definitions(WIN32)
    endif()
+elseif(PLATFORM STREQUAL "win-mingw")
+   add_compile_options(-Wa,-mbig-obj)
 elseif(PLATFORM STREQUAL "macos")
    if (ARCH STREQUAL "arm64")
       set(CMAKE_OSX_ARCHITECTURES arm64)
@@ -84,6 +86,12 @@ if(BUILD_SHARED)
       else()
          target_link_libraries(ppuc_shared PUBLIC libserialport yaml-cpp)
       endif()
+   elseif(PLATFORM STREQUAL "win-mingw")
+      target_link_directories(ppuc_shared PUBLIC
+         third-party/build-libs/${PLATFORM}/${ARCH}
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      target_link_libraries(ppuc_shared PUBLIC serialport64 yaml-cpp)
    elseif(PLATFORM STREQUAL "macos")
       target_link_directories(ppuc_shared PUBLIC
          third-party/runtime-libs/${PLATFORM}/${ARCH}
@@ -96,16 +104,25 @@ if(BUILD_SHARED)
       target_link_libraries(ppuc_shared PUBLIC -l:libserialport.so.0 -l:libyaml-cpp.so.0.8.0)
    endif()
 
-   if(PLATFORM STREQUAL "win" AND ARCH STREQUAL "x64")
+   if((PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw") AND ARCH STREQUAL "x64")
       set(PPUC_OUTPUT_NAME "ppuc64")
    else()
       set(PPUC_OUTPUT_NAME "ppuc")
    endif()
 
-   set_target_properties(ppuc_shared PROPERTIES
-      OUTPUT_NAME ${PPUC_OUTPUT_NAME}
-      VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}
-   )
+   if(PLATFORM STREQUAL "win-mingw")
+      set_target_properties(ppuc_shared PROPERTIES
+         PREFIX ""
+         IMPORT_PREFIX ""
+         OUTPUT_NAME ${PPUC_OUTPUT_NAME}
+         VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}
+      )
+   else()
+      set_target_properties(ppuc_shared PROPERTIES
+         OUTPUT_NAME ${PPUC_OUTPUT_NAME}
+         VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}
+      )
+   endif()
 
    install(TARGETS ppuc_shared
       LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
@@ -118,8 +135,9 @@ if(BUILD_STATIC)
 
    target_include_directories(ppuc_static PUBLIC ${PPUC_INCLUDE_DIRS})
 
-   if(PLATFORM STREQUAL "win")
+   if(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
       set_target_properties(ppuc_static PROPERTIES
+         PREFIX ""
          OUTPUT_NAME "ppuc_static"
       )
    else()
