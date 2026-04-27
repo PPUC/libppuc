@@ -73,6 +73,7 @@ class PPUCAPI PPUC {
   YAML::Node m_ppucConfig;
   RS485Comm* m_pRS485Comm;
   uint8_t ResolveLedType(std::string type);
+  uint32_t ResolveSwitchDebounceMode(const YAML::Node& node);
   std::vector<PPUCCoil> m_coils;
   std::vector<PPUCLamp> m_lamps;
   std::vector<PPUCSwitch> m_switches;

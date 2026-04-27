@@ -243,6 +243,34 @@ uint32_t ResolvePwmEffectMode(const YAML::Node& node) {
 }
 }  // namespace
 
+uint32_t PPUC::ResolveSwitchDebounceMode(const YAML::Node& node) {
+  if (!node) {
+    return SWITCH_DEBOUNCE_STANDARD;
+  }
+
+  const std::string value = node.as<std::string>();
+  if (IsDecimalScalar(value)) {
+    return node.as<uint32_t>();
+  }
+
+  static const std::unordered_map<std::string, uint32_t> kModes = {
+      {"standard", SWITCH_DEBOUNCE_STANDARD},
+      {"fastFlip", SWITCH_DEBOUNCE_FAST_FLIP},
+      {"fast_flip", SWITCH_DEBOUNCE_FAST_FLIP},
+      {"fastMomentary", SWITCH_DEBOUNCE_FAST_MOMENTARY},
+      {"fast_momentary", SWITCH_DEBOUNCE_FAST_MOMENTARY},
+      {"slowStable", SWITCH_DEBOUNCE_SLOW_STABLE},
+      {"slow_stable", SWITCH_DEBOUNCE_SLOW_STABLE},
+  };
+
+  const auto it = kModes.find(value);
+  if (it == kModes.end()) {
+    throw YAML::Exception(node.Mark(),
+                          "unknown switch debounce mode '" + value + "'");
+  }
+  return it->second;
+}
+
 void SendNamedEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
                                   uint32_t type, uint8_t board,
                                   uint32_t port) {
@@ -542,6 +570,13 @@ bool PPUC::Connect() {
               n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
               index++, (uint8_t)CONFIG_TOPIC_DEBOUNCE_TIME,
               n_switch["debounce"].as<uint32_t>()));
+          YAML::Node debounceMode =
+              n_switch["debounceMode"] ? n_switch["debounceMode"]
+                                       : n_switch["debounce_mode"];
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_switch["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_SWITCHES,
+              index++, (uint8_t)CONFIG_TOPIC_MODE,
+              ResolveSwitchDebounceMode(debounceMode)));
         }
 
         m_switches.push_back(PPUCSwitch(
