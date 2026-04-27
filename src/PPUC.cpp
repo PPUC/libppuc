@@ -257,8 +257,6 @@ uint32_t PPUC::ResolveSwitchDebounceMode(const YAML::Node& node) {
       {"standard", SWITCH_DEBOUNCE_STANDARD},
       {"fastFlip", SWITCH_DEBOUNCE_FAST_FLIP},
       {"fast_flip", SWITCH_DEBOUNCE_FAST_FLIP},
-      {"fastMomentary", SWITCH_DEBOUNCE_FAST_MOMENTARY},
-      {"fast_momentary", SWITCH_DEBOUNCE_FAST_MOMENTARY},
       {"slowStable", SWITCH_DEBOUNCE_SLOW_STABLE},
       {"slow_stable", SWITCH_DEBOUNCE_SLOW_STABLE},
   };
