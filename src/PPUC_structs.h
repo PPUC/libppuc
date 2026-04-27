@@ -23,6 +23,14 @@ struct PPUCSwitchState {
   }
 };
 
+struct PPUCBoardInfo {
+  uint8_t board = 0xFF;
+  uint8_t firmwareMajor = 0;
+  uint8_t firmwareMinor = 0;
+  uint8_t firmwarePatch = 0;
+  uint8_t bootMode = 0;
+};
+
 struct PPUCSwitch {
   uint8_t board;
   uint8_t port;

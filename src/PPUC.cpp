@@ -321,6 +321,57 @@ bool PPUC::Connect() {
     return false;
   }
 
+  auto printDiscoveredBoards = [this]() {
+    const std::vector<PPUCBoardInfo>& discovered =
+        m_pRS485Comm->GetDiscoveredBoards();
+    if (discovered.empty()) {
+      printf("PPUC: no boards responded to boot handshake.\n");
+      return;
+    }
+
+    printf("PPUC: boot handshake discovered %zu board(s):\n",
+           discovered.size());
+    for (const PPUCBoardInfo& info : discovered) {
+      printf("PPUC: board %u firmware %u.%u.%u\n", info.board,
+             info.firmwareMajor, info.firmwareMinor, info.firmwarePatch);
+    }
+  };
+
+  auto enterRuntimeMode = [this, &printDiscoveredBoards]() -> bool {
+    bool anyHandshakeResponse = false;
+    if (!m_pRS485Comm->SelectBoardsForRuntime(&anyHandshakeResponse)) {
+      return false;
+    }
+    if (!anyHandshakeResponse) {
+      return false;
+    }
+    printDiscoveredBoards();
+    return true;
+  };
+
+  const bool runtimeSelectedDirectly = enterRuntimeMode();
+  if (!runtimeSelectedDirectly) {
+    printf("PPUC: boot handshake received no replies; assuming boards were already in runtime mode.\n");
+    if (m_forceHardReset) {
+      printf("PPUC: forcing hard reset before retrying boot handshake.\n");
+      if (!m_pRS485Comm->ResetBoards()) {
+        printf("PPUC: forced hard reset could not be started; startup aborted.\n");
+        return false;
+      }
+    } else {
+      printf("PPUC: sending soft restart before retrying boot handshake.\n");
+      if (!m_pRS485Comm->RestartBoards()) {
+        printf("PPUC: soft restart could not be started; startup aborted.\n");
+        return false;
+      }
+    }
+
+    if (!enterRuntimeMode()) {
+      printf("PPUC: boards still did not answer the boot handshake after restart/reset.\n");
+      return false;
+    }
+  }
+
   auto startupAttempt = [this]() -> bool {
     m_coils.clear();
     m_lamps.clear();
@@ -903,47 +954,14 @@ bool PPUC::Connect() {
     return true;
   };
 
-  if (m_forceHardReset) {
-    printf("PPUC: starting board configuration using forced hard reset.\n");
-    if (!m_pRS485Comm->ResetBoards()) {
-      printf("PPUC: forced hard reset could not be started; startup aborted.\n");
-      return false;
-    }
-    if (startupAttempt()) {
-      return true;
-    }
-    const std::vector<uint8_t> missingBoards =
-        m_pRS485Comm->GetMissingConfiguredBoards();
-    printf("PPUC: forced hard reset startup still failed; startup aborted.\n");
-    if (missingBoards.empty()) {
-      printf(
-          "PPUC: one or more boards still did not acknowledge configuration.\n");
-    } else {
-      printf("PPUC: boards without config ACK:");
-      for (const uint8_t board : missingBoards) {
-        printf(" %u", board);
-      }
-      printf("\n");
-    }
-    printf(
-        "PPUC: press the reset button on these boards or power cycle the machine.\n");
-    printf(
-        "PPUC: if this is intentional, start again with --skip-boards for the missing boards.\n");
-    return false;
-  }
-
-  printf("PPUC: starting board configuration using soft restart.\n");
-  if (!m_pRS485Comm->RestartBoards()) {
-    printf("PPUC: soft restart could not be started; startup aborted.\n");
-    return false;
-  }
+  printf("PPUC: starting board configuration after successful runtime handshake.\n");
   if (startupAttempt()) {
     return true;
   }
 
   const std::vector<uint8_t> missingBoards =
       m_pRS485Comm->GetMissingConfiguredBoards();
-  printf("PPUC: soft restart startup failed; startup aborted.\n");
+  printf("PPUC: board configuration failed after runtime handshake; startup aborted.\n");
   if (missingBoards.empty()) {
     printf("PPUC: one or more boards still did not acknowledge configuration.\n");
   } else {

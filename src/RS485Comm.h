@@ -14,6 +14,13 @@
 #include <unordered_map>
 #include <vector>
 
+#if __has_include("io-boards/PPUCBootProtocol.h")
+#include "io-boards/PPUCBootProtocol.h"
+#elif __has_include("../../io-boards/src/PPUCBootProtocol.h")
+#include "../../io-boards/src/PPUCBootProtocol.h"
+#else
+#error "PPUCBootProtocol.h not found"
+#endif
 #include "io-boards/PPUCProtocolV2.h"
 #include "PPUC_structs.h"
 #include "io-boards/Event.h"
@@ -67,6 +74,8 @@ class RS485Comm {
   void Disconnect();
   bool RestartBoards();
   bool ResetBoards();
+  bool SelectBoardsForRuntime(bool* outAnyResponse = nullptr);
+  const std::vector<PPUCBoardInfo>& GetDiscoveredBoards() const;
 
   void Run();
 
@@ -113,6 +122,8 @@ class RS485Comm {
   bool SendOutputStateFrame(uint8_t nextBoard);
   bool ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
                         uint8_t key);
+  bool SendHelloFrame(uint8_t boardId, uint8_t intent);
+  bool ReceiveHelloAck(uint8_t expectedBoard, PPUCBoardInfo* outInfo);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState);
   bool SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
@@ -147,6 +158,7 @@ class RS485Comm {
   std::unordered_map<uint8_t, VirtualSwitchBoardState> m_virtualSwitchBoards;
   std::unordered_map<uint16_t, uint8_t> m_virtualSwitchOwnerByNumber;
   bool m_activeBoards[RS485_COMM_MAX_BOARDS] = {false};
+  std::vector<PPUCBoardInfo> m_discoveredBoards;
 
   bool m_debug = false;
   bool m_debugErrors = false;

@@ -241,6 +241,146 @@ bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
   return false;
 }
 
+bool RS485Comm::SendHelloFrame(uint8_t boardId, uint8_t intent) {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  uint8_t frame[ppuc::boot::kHelloFrameBytes];
+  frame[0] = ppuc::boot::kSyncByte;
+  frame[1] = ppuc::boot::kFrameHello;
+  frame[2] = boardId;
+  frame[3] = m_sequence++;
+  frame[4] = intent;
+  frame[5] = ppuc::boot::kProtocolMajor;
+  frame[6] = ppuc::boot::kProtocolMinor;
+  frame[7] = 0;
+  const uint16_t crc = ppuc::boot::Crc16Ccitt(
+      frame, ppuc::boot::kHeaderBytes + ppuc::boot::kHelloPayloadBytes);
+  frame[8] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  frame[9] = static_cast<uint8_t>(crc & 0xff);
+
+  return WriteBytes("HelloFrame", frame, sizeof(frame));
+}
+
+bool RS485Comm::ReceiveHelloAck(uint8_t expectedBoard, PPUCBoardInfo* outInfo) {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  auto readExact = [this](uint8_t* dst, size_t bytes, unsigned timeoutMs) -> bool {
+    size_t totalRead = 0;
+    while (totalRead < bytes) {
+      const int read =
+          sp_blocking_read(m_pSerialPort, dst + totalRead, bytes - totalRead,
+                           timeoutMs);
+      if (read <= 0) {
+        return false;
+      }
+      totalRead += static_cast<size_t>(read);
+    }
+    return true;
+  };
+
+  auto start = std::chrono::steady_clock::now();
+  uint8_t header[ppuc::boot::kHeaderBytes];
+  uint8_t frame[ppuc::boot::kHelloAckFrameBytes];
+
+  while (std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now() - start)
+             .count() < 80) {
+    if ((int)sp_input_waiting(m_pSerialPort) <= 0) {
+      continue;
+    }
+
+    if (!readExact(&header[0], 1, RS485_COMM_SERIAL_READ_TIMEOUT)) {
+      continue;
+    }
+    if (header[0] != ppuc::boot::kSyncByte) {
+      continue;
+    }
+
+    if (!readExact(&header[1], ppuc::boot::kHeaderBytes - 1,
+                   RS485_COMM_SERIAL_READ_TIMEOUT)) {
+      continue;
+    }
+
+    if (header[1] != ppuc::boot::kFrameHelloAck) {
+      continue;
+    }
+
+    memcpy(frame, header, ppuc::boot::kHeaderBytes);
+    if (!readExact(&frame[ppuc::boot::kHeaderBytes],
+                   ppuc::boot::kHelloAckPayloadBytes + ppuc::boot::kCrcBytes,
+                   RS485_COMM_SERIAL_READ_TIMEOUT)) {
+      continue;
+    }
+
+    const uint16_t receivedCrc =
+        (static_cast<uint16_t>(frame[ppuc::boot::kHelloAckFrameBytes - 2]) << 8) |
+        static_cast<uint16_t>(frame[ppuc::boot::kHelloAckFrameBytes - 1]);
+    const uint16_t calculatedCrc = ppuc::boot::Crc16Ccitt(
+        frame, ppuc::boot::kHeaderBytes + ppuc::boot::kHelloAckPayloadBytes);
+    if (receivedCrc != calculatedCrc) {
+      continue;
+    }
+
+    if (frame[4] != expectedBoard) {
+      continue;
+    }
+
+    if (outInfo) {
+      outInfo->board = frame[4];
+      outInfo->bootMode = frame[5];
+      outInfo->firmwareMajor = frame[6];
+      outInfo->firmwareMinor = frame[7];
+      outInfo->firmwarePatch = frame[8];
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool RS485Comm::SelectBoardsForRuntime(bool* outAnyResponse) {
+  if (outAnyResponse) {
+    *outAnyResponse = false;
+  }
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+
+  m_discoveredBoards.clear();
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+
+  for (uint8_t board = 0; board < RS485_COMM_MAX_BOARDS; ++board) {
+    if (!SendHelloFrame(board, ppuc::boot::kIntentRuntime)) {
+      return false;
+    }
+
+    PPUCBoardInfo info;
+    if (!ReceiveHelloAck(board, &info)) {
+      continue;
+    }
+
+    if (outAnyResponse) {
+      *outAnyResponse = true;
+    }
+    m_discoveredBoards.push_back(info);
+    if (m_debug) {
+      DebugPrintf("Received HelloAck board=%u fw=%u.%u.%u mode=%u", info.board,
+                  info.firmwareMajor, info.firmwareMinor, info.firmwarePatch,
+                  info.bootMode);
+    }
+  }
+
+  return true;
+}
+
+const std::vector<PPUCBoardInfo>& RS485Comm::GetDiscoveredBoards() const {
+  return m_discoveredBoards;
+}
+
 void RS485Comm::Run() {
   m_stopRequested = false;
   m_nextSwitchPollAt =
@@ -569,6 +709,7 @@ bool RS485Comm::Connect(const char* pDevice) {
          sizeof(m_initialConfigAckMissesByBoard));
   m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
   m_configAckFailedBoards.clear();
+  m_discoveredBoards.clear();
 
   return true;
 }
