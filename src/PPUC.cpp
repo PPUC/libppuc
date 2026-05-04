@@ -276,10 +276,14 @@ void SendNamedEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
     return;
   }
 
+  const std::string name = effectNode["name"].as<std::string>();
+  if (name.find_first_not_of(" \t\r\n") == std::string::npos) {
+    return;
+  }
+
   const uint32_t value = effectNode["value"] ? effectNode["value"].as<uint32_t>()
                                              : 1u;
-  const uint32_t number =
-      HashNamedTriggerId(effectNode["name"].as<std::string>().c_str());
+  const uint32_t number = HashNamedTriggerId(name.c_str());
 
   uint8_t index = 0;
   comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
