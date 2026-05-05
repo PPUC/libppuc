@@ -345,6 +345,17 @@ void RS485Comm::QueueEvent(Event* event) {
     case EVENT_READ_SWITCHES:
       delete event;
       return;
+
+    case EVENT_SOURCE_EFFECT:
+      {
+        std::lock_guard<std::mutex> lock(m_eventQueueMutex);
+        if (m_events.size() >= RS485_COMM_QUEUE_SIZE_MAX) {
+          delete event;
+          return;
+        }
+        m_events.push(event);
+      }
+      return;
   }
 
   // Legacy RS485 event packets are no longer part of the active v2 transport.
