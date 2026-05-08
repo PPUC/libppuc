@@ -40,8 +40,10 @@
 #endif
 
 #define RS485_COMM_QUEUE_SIZE_MAX 128
+#define RS485_COMM_OUTPUT_QUEUE_SIZE_MAX 256
 #define RS485_COMM_MAX_EVENTS_TO_SEND 32
 #define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
+#define RS485_COMM_EFFECT_EVENT_SPACING_US 1000
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 3
 #define RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS 250
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
@@ -53,6 +55,12 @@ struct VirtualSwitchBoardState {
   std::vector<uint16_t> switchNumbers;
   std::vector<uint8_t> switchStates;
   bool dirty = false;
+};
+
+struct QueuedOutputSnapshot {
+  uint8_t coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
+  uint8_t lampBitmap[ppuc::v2::kMaxLampBytes] = {0};
+  uint8_t giLevels[ppuc::v2::kGiStrings] = {0};
 };
 
 class RS485Comm {
@@ -123,9 +131,14 @@ class RS485Comm {
   void RebuildSwitchOwnershipMasks();
   void EnsureConfiguredBoardPresenceKnown();
   bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
+  bool SendOutputStateFrameFromBuffers(uint8_t nextBoard, const uint8_t* coils,
+                                       const uint8_t* lamps,
+                                       const uint8_t* giLevels);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
   void ClearQueuedEvents();
+  void ClearQueuedOutputSnapshots();
   void ClearOutputState();
+  void QueueOutputSnapshotLocked();
   bool SendOutputsOffFrame();
   void DebugPrintf(const char* format, ...);
   void ErrorPrintf(const char* format, ...);
@@ -179,8 +192,10 @@ class RS485Comm {
   struct sp_port_config* m_pSerialPortConfig;
   std::thread* m_pThread;
   std::queue<Event*> m_events;
+  std::queue<QueuedOutputSnapshot> m_outputSnapshots;
   std::queue<PPUCSwitchState*> m_switches;
   std::mutex m_eventQueueMutex;
+  std::mutex m_outputQueueMutex;
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};

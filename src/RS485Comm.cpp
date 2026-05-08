@@ -263,6 +263,10 @@ void RS485Comm::Run() {
           break;
         }
         SendEvent(event);
+        if (event->sourceId == EVENT_SOURCE_EFFECT) {
+          std::this_thread::sleep_for(
+              std::chrono::microseconds(RS485_COMM_EFFECT_EVENT_SPACING_US));
+        }
         delete event;
       }
 
@@ -278,16 +282,35 @@ void RS485Comm::Run() {
         }
       }
 
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS));
-
       const auto now = std::chrono::steady_clock::now();
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
         nextBoard = m_switchBoards[0];
       }
 
-      if (!SendOutputStateFrame(nextBoard)) {
+      QueuedOutputSnapshot snapshot;
+      bool haveQueuedSnapshot = false;
+      {
+        std::lock_guard<std::mutex> lock(m_outputQueueMutex);
+        if (!m_outputSnapshots.empty()) {
+          snapshot = m_outputSnapshots.front();
+          m_outputSnapshots.pop();
+          haveQueuedSnapshot = true;
+        }
+      }
+
+      if (!haveQueuedSnapshot) {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS));
+      }
+
+      const bool sent =
+          haveQueuedSnapshot
+              ? SendOutputStateFrameFromBuffers(nextBoard, snapshot.coilBitmap,
+                                               snapshot.lampBitmap,
+                                               snapshot.giLevels)
+              : SendOutputStateFrame(nextBoard);
+      if (!sent) {
         continue;
       }
       if (nextBoard != ppuc::v2::kNoBoard) {
@@ -311,6 +334,7 @@ void RS485Comm::QueueEvent(Event* event) {
           it->second < ppuc::v2::kMaxCoilBits) {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         ppuc::v2::SetBitmapBit(m_coilBitmap, it->second, event->value != 0);
+        QueueOutputSnapshotLocked();
       }
       delete event;
       return;
@@ -372,11 +396,34 @@ void RS485Comm::ClearQueuedEvents() {
   }
 }
 
+void RS485Comm::ClearQueuedOutputSnapshots() {
+  std::lock_guard<std::mutex> lock(m_outputQueueMutex);
+  while (!m_outputSnapshots.empty()) {
+    m_outputSnapshots.pop();
+  }
+}
+
 void RS485Comm::ClearOutputState() {
   std::lock_guard<std::mutex> lock(m_stateMutex);
   memset(m_coilBitmap, 0, sizeof(m_coilBitmap));
   memset(m_lampBitmap, 0, sizeof(m_lampBitmap));
   memset(m_giLevels, 0, sizeof(m_giLevels));
+}
+
+void RS485Comm::QueueOutputSnapshotLocked() {
+  std::lock_guard<std::mutex> queueLock(m_outputQueueMutex);
+  if (m_outputSnapshots.size() >= RS485_COMM_OUTPUT_QUEUE_SIZE_MAX) {
+    if (m_debug || m_debugErrors) {
+      ErrorPrintf("Dropping oldest queued output snapshot: queue_full");
+    }
+    m_outputSnapshots.pop();
+  }
+
+  QueuedOutputSnapshot snapshot;
+  memcpy(snapshot.coilBitmap, m_coilBitmap, sizeof(snapshot.coilBitmap));
+  memcpy(snapshot.lampBitmap, m_lampBitmap, sizeof(snapshot.lampBitmap));
+  memcpy(snapshot.giLevels, m_giLevels, sizeof(snapshot.giLevels));
+  m_outputSnapshots.push(snapshot);
 }
 
 bool RS485Comm::SendOutputsOffFrame() {
@@ -399,6 +446,7 @@ void RS485Comm::Disconnect() {
   // Once the worker thread is down, no queued state changes will be transmitted
   // anymore. Drop them and send a deterministic all-off snapshot instead.
   ClearQueuedEvents();
+  ClearQueuedOutputSnapshots();
   ClearOutputState();
   SendOutputsOffFrame();
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -1349,6 +1397,21 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
     return false;
   }
 
+  std::lock_guard<std::mutex> lock(m_stateMutex);
+  return SendOutputStateFrameFromBuffers(nextBoard, m_coilBitmap, m_lampBitmap,
+                                         m_giLevels);
+}
+
+bool RS485Comm::SendOutputStateFrameFromBuffers(uint8_t nextBoard,
+                                                const uint8_t* coils,
+                                                const uint8_t* lamps,
+                                                const uint8_t* giLevels) {
+  if (m_pSerialPort == NULL ||
+      !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig) ||
+      !ppuc::v2::IsValidBoard(nextBoard)) {
+    return false;
+  }
+
   const size_t coilBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.coilBits);
   const size_t lampBytes = ppuc::v2::BitsToBytes(m_runtimeConfig.lampBits);
   const size_t payloadBytes = coilBytes + lampBytes + ppuc::v2::kGiBytes;
@@ -1366,15 +1429,12 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
   buffer[4] = m_epoch;
   m_lastOutputSequenceSent = buffer[3];
 
-  {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
-    memcpy(&buffer[5], m_coilBitmap, coilBytes);
-    memcpy(&buffer[5 + coilBytes], m_lampBitmap, lampBytes);
-    memset(&buffer[5 + coilBytes + lampBytes], 0, ppuc::v2::kGiBytes);
-    for (uint8_t giString = 0; giString < ppuc::v2::kGiStrings; ++giString) {
-      ppuc::v2::SetPackedNibble(&buffer[5 + coilBytes + lampBytes], giString,
-                                m_giLevels[giString]);
-    }
+  memcpy(&buffer[5], coils, coilBytes);
+  memcpy(&buffer[5 + coilBytes], lamps, lampBytes);
+  memset(&buffer[5 + coilBytes + lampBytes], 0, ppuc::v2::kGiBytes);
+  for (uint8_t giString = 0; giString < ppuc::v2::kGiStrings; ++giString) {
+    ppuc::v2::SetPackedNibble(&buffer[5 + coilBytes + lampBytes], giString,
+                              giLevels[giString]);
   }
 
   const uint16_t crc =
