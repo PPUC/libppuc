@@ -699,7 +699,10 @@ bool PPUC::Connect() {
                                 (uint8_t)CONFIG_TOPIC_REPEAT,
                                 n_pwm_effect["repeat"].as<int16_t>() == -1
                                     ? 255
-                                    : n_pwm_effect["repeat"].as<uint32_t>()));
+                                    : (n_pwm_effect["repeat"].as<int16_t>() == -2
+                                           ? 254
+                                           : n_pwm_effect["repeat"]
+                                                 .as<uint32_t>())));
 
             SendNamedEffectTriggerConfig(
                 m_pRS485Comm, n_pwm_effect, CONFIG_TOPIC_PWM_EFFECT,
@@ -851,7 +854,10 @@ bool PPUC::Connect() {
                                 (uint8_t)CONFIG_TOPIC_REPEAT,
                                 n_led_effect["repeat"].as<int16_t>() == -1
                                     ? 255
-                                    : n_led_effect["repeat"].as<uint32_t>()));
+                                    : (n_led_effect["repeat"].as<int16_t>() == -2
+                                           ? 254
+                                           : n_led_effect["repeat"]
+                                                 .as<uint32_t>())));
 
             SendNamedEffectTriggerConfig(
                 m_pRS485Comm, n_led_effect, CONFIG_TOPIC_LED_EFFECT,
