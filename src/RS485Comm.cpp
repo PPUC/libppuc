@@ -350,8 +350,16 @@ void RS485Comm::QueueEvent(Event* event) {
       {
         std::lock_guard<std::mutex> lock(m_eventQueueMutex);
         if (m_events.size() >= RS485_COMM_QUEUE_SIZE_MAX) {
+          if (m_debug || m_debugErrors) {
+            ErrorPrintf("Dropping queued effect trigger: id=%u value=%u queue_full",
+                        event->eventId, event->value);
+          }
           delete event;
           return;
+        }
+        if (m_debug || m_debugErrors) {
+          DebugPrintf("Queued effect trigger: id=%u value=%u",
+                      event->eventId, event->value);
         }
         m_events.push(event);
       }
@@ -1623,7 +1631,17 @@ bool RS485Comm::SendEvent(Event* event) {
                                       ppuc::v2::kTriggerPayloadBytes);
   frame[9] = static_cast<uint8_t>((crc >> 8) & 0xFFu);
   frame[10] = static_cast<uint8_t>(crc & 0xFFu);
-  return WriteBytes("trigger frame", frame, sizeof(frame));
+  const bool sent = WriteBytes("trigger frame", frame, sizeof(frame));
+  if ((m_debug || m_debugErrors) && event->sourceId == EVENT_SOURCE_EFFECT) {
+    if (sent) {
+      DebugPrintf("Sent effect trigger frame: id=%u value=%u seq=%u epoch=%u",
+                  event->eventId, event->value, frame[3], frame[4]);
+    } else {
+      ErrorPrintf("Failed to send effect trigger frame: id=%u value=%u seq=%u epoch=%u",
+                  event->eventId, event->value, frame[3], frame[4]);
+    }
+  }
+  return sent;
 }
 
 Event* RS485Comm::receiveEvent() {
