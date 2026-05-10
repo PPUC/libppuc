@@ -153,6 +153,11 @@ void PPUC::SetSwitchReplyDelayUs(uint32_t delayUs) {
   m_pRS485Comm->SetSwitchReplyDelayUs(delayUs);
 }
 
+void PPUC::SetCoilHoldFrames(uint8_t holdFrames) {
+  m_coilHoldFrames = holdFrames;
+  m_pRS485Comm->SetCoilHoldFrames(holdFrames);
+}
+
 void PPUC::SetDisableFastFlipForTests(bool disableFastFlipForTests) {
   m_disableFastFlipForTests = disableFastFlipForTests;
 }

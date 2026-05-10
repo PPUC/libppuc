@@ -151,6 +151,11 @@ void RS485Comm::SetSwitchReplyDelayUs(uint32_t delayUs) {
   m_switchReplyDelayUs = delayUs;
 }
 
+void RS485Comm::SetCoilHoldFrames(uint8_t holdFrames) {
+  std::lock_guard<std::mutex> lock(m_stateMutex);
+  m_coilHoldFrameCount = holdFrames;
+}
+
 void RS485Comm::DebugPrintf(const char* format, ...) {
   if (!m_debug) {
     return;
@@ -304,14 +309,33 @@ void RS485Comm::Run() {
             std::chrono::milliseconds(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS));
       }
 
-      const bool sent =
-          haveQueuedSnapshot
-              ? SendOutputStateFrameFromBuffers(nextBoard, snapshot.coilBitmap,
-                                               snapshot.lampBitmap,
-                                               snapshot.giLevels)
-              : SendOutputStateFrame(nextBoard);
+      uint8_t coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
+      uint8_t lampBitmap[ppuc::v2::kMaxLampBytes] = {0};
+      uint8_t giLevels[ppuc::v2::kGiStrings] = {0};
+      uint8_t holdFrames[ppuc::v2::kMaxCoilBits] = {0};
+      {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        if (haveQueuedSnapshot) {
+          memcpy(coilBitmap, snapshot.coilBitmap, sizeof(coilBitmap));
+          memcpy(lampBitmap, snapshot.lampBitmap, sizeof(lampBitmap));
+          memcpy(giLevels, snapshot.giLevels, sizeof(giLevels));
+        } else {
+          memcpy(coilBitmap, m_coilBitmap, sizeof(coilBitmap));
+          memcpy(lampBitmap, m_lampBitmap, sizeof(lampBitmap));
+          memcpy(giLevels, m_giLevels, sizeof(giLevels));
+        }
+        memcpy(holdFrames, m_coilHoldFrames, sizeof(holdFrames));
+        ApplyCoilHoldover(coilBitmap, holdFrames);
+      }
+
+      const bool sent = SendOutputStateFrameFromBuffers(nextBoard, coilBitmap,
+                                                        lampBitmap, giLevels);
       if (!sent) {
         continue;
+      }
+      {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        ConsumeCoilHoldoverLocked(holdFrames);
       }
       if (nextBoard != ppuc::v2::kNoBoard) {
         ReceiveSwitchStateChain(nextBoard);
@@ -333,7 +357,11 @@ void RS485Comm::QueueEvent(Event* event) {
       if (it != m_coilNumberToIndex.end() &&
           it->second < ppuc::v2::kMaxCoilBits) {
         std::lock_guard<std::mutex> lock(m_stateMutex);
-        ppuc::v2::SetBitmapBit(m_coilBitmap, it->second, event->value != 0);
+        const bool coilOn = event->value != 0;
+        ppuc::v2::SetBitmapBit(m_coilBitmap, it->second, coilOn);
+        if (coilOn) {
+          m_coilHoldFrames[it->second] = m_coilHoldFrameCount;
+        }
         QueueOutputSnapshotLocked();
       }
       delete event;
@@ -406,8 +434,32 @@ void RS485Comm::ClearQueuedOutputSnapshots() {
 void RS485Comm::ClearOutputState() {
   std::lock_guard<std::mutex> lock(m_stateMutex);
   memset(m_coilBitmap, 0, sizeof(m_coilBitmap));
+  memset(m_coilHoldFrames, 0, sizeof(m_coilHoldFrames));
   memset(m_lampBitmap, 0, sizeof(m_lampBitmap));
   memset(m_giLevels, 0, sizeof(m_giLevels));
+}
+
+void RS485Comm::ApplyCoilHoldover(uint8_t* coils,
+                                  const uint8_t* holdFrames) const {
+  const uint16_t coilBits =
+      std::min<uint16_t>(m_runtimeConfig.coilBits, ppuc::v2::kMaxCoilBits);
+  for (uint16_t i = 0; i < coilBits; ++i) {
+    if (holdFrames[i] == 0) {
+      continue;
+    }
+    ppuc::v2::SetBitmapBit(coils, i, true);
+  }
+}
+
+void RS485Comm::ConsumeCoilHoldoverLocked(const uint8_t* holdFrames) {
+  const uint16_t coilBits =
+      std::min<uint16_t>(m_runtimeConfig.coilBits, ppuc::v2::kMaxCoilBits);
+  for (uint16_t i = 0; i < coilBits; ++i) {
+    if (holdFrames[i] == 0 || m_coilHoldFrames[i] == 0) {
+      continue;
+    }
+    --m_coilHoldFrames[i];
+  }
 }
 
 void RS485Comm::QueueOutputSnapshotLocked() {
@@ -1397,9 +1449,18 @@ bool RS485Comm::SendOutputStateFrame(uint8_t nextBoard) {
     return false;
   }
 
+  uint8_t coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
+  uint8_t lampBitmap[ppuc::v2::kMaxLampBytes] = {0};
+  uint8_t giLevels[ppuc::v2::kGiStrings] = {0};
+  uint8_t holdFrames[ppuc::v2::kMaxCoilBits] = {0};
   std::lock_guard<std::mutex> lock(m_stateMutex);
-  return SendOutputStateFrameFromBuffers(nextBoard, m_coilBitmap, m_lampBitmap,
-                                         m_giLevels);
+  memcpy(coilBitmap, m_coilBitmap, sizeof(coilBitmap));
+  memcpy(lampBitmap, m_lampBitmap, sizeof(lampBitmap));
+  memcpy(giLevels, m_giLevels, sizeof(giLevels));
+  memcpy(holdFrames, m_coilHoldFrames, sizeof(holdFrames));
+  ApplyCoilHoldover(coilBitmap, holdFrames);
+  return SendOutputStateFrameFromBuffers(nextBoard, coilBitmap, lampBitmap,
+                                         giLevels);
 }
 
 bool RS485Comm::SendOutputStateFrameFromBuffers(uint8_t nextBoard,

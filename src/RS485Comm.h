@@ -110,6 +110,7 @@ class RS485Comm {
   void SetDebug(bool debug);
   void SetDebugErrors(bool debugErrors);
   void SetSwitchReplyDelayUs(uint32_t delayUs);
+  void SetCoilHoldFrames(uint8_t holdFrames);
 
  private:
   void LogMessage(const char* format, ...);
@@ -134,6 +135,8 @@ class RS485Comm {
   bool SendOutputStateFrameFromBuffers(uint8_t nextBoard, const uint8_t* coils,
                                        const uint8_t* lamps,
                                        const uint8_t* giLevels);
+  void ApplyCoilHoldover(uint8_t* coils, const uint8_t* holdFrames) const;
+  void ConsumeCoilHoldoverLocked(const uint8_t* holdFrames);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
   void ClearQueuedEvents();
   void ClearQueuedOutputSnapshots();
@@ -164,6 +167,7 @@ class RS485Comm {
   bool m_debug = false;
   bool m_debugErrors = false;
   bool m_runtimeEnabled = true;
+  uint8_t m_coilHoldFrameCount = 3;
   uint8_t m_sequence = 0;
   uint8_t m_epoch = 1;
   uint8_t m_lastOutputSequenceSent = 0;
@@ -179,6 +183,7 @@ class RS485Comm {
   std::unordered_map<uint16_t, uint16_t> m_switchNumberToIndex;
 
   uint8_t m_coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
+  uint8_t m_coilHoldFrames[ppuc::v2::kMaxCoilBits] = {0};
   uint8_t m_lampBitmap[ppuc::v2::kMaxLampBytes] = {0};
   uint8_t m_giLevels[ppuc::v2::kGiStrings] = {0};
   uint8_t m_switchBitmap[ppuc::v2::kMaxSwitchBytes] = {0};
