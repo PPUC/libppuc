@@ -201,7 +201,10 @@ int64_t RS485Comm::SwitchReplyWindowUs() const {
   // Preserve the previously working fixed host-side reply window when no
   // experimental per-board delay is configured. The CLI knob adds budget on
   // top of this known baseline instead of replacing it.
-  const int64_t baseUs = 30000;
+  // The host window needs to cover one polling cycle plus the board-side
+  // debounce interval and a bit of serial/loop jitter. The previous 30 ms
+  // baseline is still marginal on some runs with trough/outhole switches.
+  const int64_t baseUs = 40000;
   const int64_t configuredDelayUs =
       static_cast<int64_t>(m_switchReplyDelayUs) * static_cast<int64_t>(boardCount);
   return baseUs + configuredDelayUs;
