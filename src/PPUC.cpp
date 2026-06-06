@@ -734,7 +734,9 @@ bool PPUC::Connect() {
             PPUCCoil(n_pwmOutput["board"].as<uint8_t>(),
                      n_pwmOutput["port"].as<uint8_t>(), (uint8_t)type,
                      n_pwmOutput["number"].as<uint8_t>(),
-                     n_pwmOutput["description"].as<std::string>()));
+                     n_pwmOutput["description"].as<std::string>(),
+                     n_pwmOutput["ballSearch"] &&
+                         n_pwmOutput["ballSearch"].as<bool>()));
 
         if (AbortConfigurationEarly()) {
           return false;

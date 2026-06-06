@@ -24,6 +24,11 @@ Main files:
 - `src/RS485Comm.cpp`: RS485 serial transport and `v2` frame handling.
 - `src/PPUC_structs.h`: public structs exposed to callers.
 
+Optional YAML metadata parsed here:
+
+- switches support `button: true`; `libppuc` exposes it through `PPUCSwitch::button` so applications can treat cabinet/flipper controls differently from playfield/ball switches.
+- PWM outputs/coils support `ballSearch: true`; `libppuc` exposes it through `PPUCCoil::ballSearch`, but does not fire ball-search coils itself.
+
 ## Build And Validation
 
 Build instructions in `README.md` are platform-specific and use CMake.
@@ -165,6 +170,9 @@ The host then:
 - sends `CONFIG_TOPIC_SWITCH_CHAIN` so each board knows which board follows it
 - starts polling by placing the first switch board into `OutputStateFrame.header.nextBoard`
 - calls `ReceiveSwitchStateChain(firstBoard)` after each output frame
+- periodically sends `SwitchRefreshFrame` through the same token chain when the
+  application-configured idle timer expires, causing boards to re-read and
+  resend full switch state.
 
 `ReceiveSwitchStateChain()` expects:
 

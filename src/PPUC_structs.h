@@ -40,10 +40,12 @@ struct PPUCCoil {
   uint8_t port;
   uint8_t type;
   uint8_t number;
+  bool ballSearch;
   std::string description;
 
-  PPUCCoil(uint8_t b, uint8_t p, uint8_t t, uint8_t n,const std::string& d)
-  : board(b), port(p), type(t), number(n), description(d) {}
+  PPUCCoil(uint8_t b, uint8_t p, uint8_t t, uint8_t n, const std::string& d,
+           bool bs = false)
+  : board(b), port(p), type(t), number(n), ballSearch(bs), description(d) {}
 };
 
 struct PPUCLamp {
