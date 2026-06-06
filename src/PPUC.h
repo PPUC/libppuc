@@ -39,6 +39,7 @@ class PPUCAPI PPUC {
   void SetDebugErrors(bool debugErrors);
   void SetSkippedBoardsCsv(const char* skippedBoardsCsv);
   void SetSwitchReplyDelayUs(uint32_t delayUs);
+  void SetSwitchRefreshIdleMs(uint32_t idleMs);
   void SetCoilHoldFrames(uint8_t holdFrames);
   void SetDisableFastFlipForTests(bool disableFastFlipForTests);
   void SetForceHardReset(bool forceHardReset);
@@ -86,6 +87,7 @@ class PPUCAPI PPUC {
   uint8_t m_coinDoorClosedSwitch;
   uint8_t m_gameOnSolenoid;
   uint32_t m_switchReplyDelayUs = 0;
+  uint32_t m_switchRefreshIdleMs = 0;
   uint8_t m_coilHoldFrames = 3;
   bool m_disableFastFlipForTests = false;
   bool m_forceHardReset = false;

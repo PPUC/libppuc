@@ -84,6 +84,7 @@ class RS485Comm {
   bool SendSetupFrame();
   bool SendResetFrame();
   bool SendRestartFrame();
+  bool SendSwitchRefreshFrame(uint8_t nextBoard);
   void SetMappings(const std::vector<uint16_t>& coils,
                    const std::vector<uint16_t>& lamps,
                    const std::vector<uint16_t>& switches);
@@ -92,6 +93,7 @@ class RS485Comm {
   void SetSwitchNumbersByBoard(
       const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
   void SetSkippedBoards(const std::set<uint8_t>& boards);
+  void SetButtonSwitchNumbers(const std::set<uint16_t>& numbers);
   void FinalizeConfiguredBoardPresence();
   bool IsBoardPresent(uint8_t board) const;
   bool IsBoardVirtualized(uint8_t board) const;
@@ -110,6 +112,7 @@ class RS485Comm {
   void SetDebug(bool debug);
   void SetDebugErrors(bool debugErrors);
   void SetSwitchReplyDelayUs(uint32_t delayUs);
+  void SetSwitchRefreshIdleMs(uint32_t idleMs);
   void SetCoilHoldFrames(uint8_t holdFrames);
 
  private:
@@ -135,6 +138,7 @@ class RS485Comm {
   bool SendOutputStateFrameFromBuffers(uint8_t nextBoard, const uint8_t* coils,
                                        const uint8_t* lamps,
                                        const uint8_t* giLevels);
+  void NoteSwitchActivity(uint16_t switchNumber);
   void ApplyCoilHoldover(uint8_t* coils, const uint8_t* holdFrames) const;
   void ConsumeCoilHoldoverLocked(const uint8_t* holdFrames);
   bool WriteBytes(const char* context, const uint8_t* buffer, size_t size);
@@ -174,6 +178,7 @@ class RS485Comm {
   bool m_needSessionResync = false;
   uint8_t m_switchReplyMisses = 0;
   uint32_t m_switchReplyDelayUs = 0;
+  uint32_t m_switchRefreshIdleMs = 0;
   ppuc::v2::RuntimeConfig m_runtimeConfig;
   std::vector<uint16_t> m_coilIndexToNumber;
   std::vector<uint16_t> m_lampIndexToNumber;
@@ -181,6 +186,7 @@ class RS485Comm {
   std::unordered_map<uint16_t, uint16_t> m_coilNumberToIndex;
   std::unordered_map<uint16_t, uint16_t> m_lampNumberToIndex;
   std::unordered_map<uint16_t, uint16_t> m_switchNumberToIndex;
+  std::set<uint16_t> m_buttonSwitchNumbers;
 
   uint8_t m_coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
   uint8_t m_coilHoldFrames[ppuc::v2::kMaxCoilBits] = {0};
@@ -212,5 +218,6 @@ class RS485Comm {
   uint8_t m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
   std::set<uint8_t> m_configAckFailedBoards;
   std::chrono::steady_clock::time_point m_nextSwitchPollAt;
+  std::chrono::steady_clock::time_point m_nextSwitchRefreshAt;
   bool m_boardPresenceFinalized = false;
 };

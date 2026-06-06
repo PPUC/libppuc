@@ -370,6 +370,7 @@ bool PPUC::Connect() {
     std::set<uint16_t> coilNumbers;
     std::set<uint16_t> lampNumbers;
     std::set<uint16_t> switchNumbers;
+    std::set<uint16_t> buttonSwitchNumbers;
     std::unordered_map<uint8_t, std::vector<uint16_t>> switchNumbersByBoard;
     const YAML::Node& boards = m_ppucConfig["boards"];
     std::vector<uint8_t> configuredBoards;
@@ -422,6 +423,9 @@ bool PPUC::Connect() {
         for (YAML::Node n_switch : matrixSwitches) {
           const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
           switchNumbers.insert(switchNumber);
+          if (n_switch["button"] && n_switch["button"].as<bool>()) {
+            buttonSwitchNumbers.insert(switchNumber);
+          }
           switchNumbersByBoard[n_switch["board"].as<uint8_t>()].push_back(
               switchNumber);
         }
@@ -433,6 +437,9 @@ bool PPUC::Connect() {
       for (YAML::Node n_switch : switches) {
         const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
         switchNumbers.insert(switchNumber);
+        if (n_switch["button"] && n_switch["button"].as<bool>()) {
+          buttonSwitchNumbers.insert(switchNumber);
+        }
         switchNumbersByBoard[n_switch["board"].as<uint8_t>()].push_back(
             switchNumber);
       }
@@ -500,6 +507,7 @@ bool PPUC::Connect() {
     m_pRS485Comm->SetRuntimeConfig(runtimeConfig);
     m_pRS485Comm->SetConfiguredBoards(configuredBoards);
     m_pRS485Comm->SetSwitchNumbersByBoard(switchNumbersByBoard);
+    m_pRS485Comm->SetButtonSwitchNumbers(buttonSwitchNumbers);
     m_pRS485Comm->SetSkippedBoards(m_skippedBoards);
 
     // Send switch matrix configuration to I/O boards
@@ -545,7 +553,8 @@ bool PPUC::Connect() {
           m_switches.push_back(PPUCSwitch(
               n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
               n_switch["number"].as<uint8_t>(),
-              n_switch["description"].as<std::string>()));
+              n_switch["description"].as<std::string>(),
+              n_switch["button"] && n_switch["button"].as<bool>()));
         }
       }
     }
@@ -589,7 +598,8 @@ bool PPUC::Connect() {
         m_switches.push_back(PPUCSwitch(
             n_switch["board"].as<uint8_t>(), n_switch["port"].as<uint8_t>(),
             n_switch["number"].as<uint8_t>(),
-            n_switch["description"].as<std::string>()));
+            n_switch["description"].as<std::string>(),
+            n_switch["button"] && n_switch["button"].as<bool>()));
 
         if (AbortConfigurationEarly()) {
           return false;
@@ -1036,6 +1046,11 @@ void PPUC::SetGIState(int string, int brightness) {
 void PPUC::SetSwitchState(int number, int state) {
   m_pRS485Comm->SetVirtualSwitchState(static_cast<uint16_t>(number),
                                       state == 0 ? 0 : 1);
+}
+
+void PPUC::SetSwitchRefreshIdleMs(uint32_t idleMs) {
+  m_switchRefreshIdleMs = idleMs;
+  m_pRS485Comm->SetSwitchRefreshIdleMs(idleMs);
 }
 
 void PPUC::TriggerEvent(uint8_t source, int number, int value) {

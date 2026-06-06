@@ -113,6 +113,7 @@ RS485Comm::RS485Comm() {
   m_pSerialPortConfig = NULL;
   m_runtimeConfig = ppuc::v2::RuntimeConfig();
   m_nextSwitchPollAt = std::chrono::steady_clock::now();
+  m_nextSwitchRefreshAt = std::chrono::steady_clock::time_point::max();
 }
 
 RS485Comm::~RS485Comm() {
@@ -149,6 +150,14 @@ void RS485Comm::SetDebugErrors(bool debugErrors) {
 
 void RS485Comm::SetSwitchReplyDelayUs(uint32_t delayUs) {
   m_switchReplyDelayUs = delayUs;
+}
+
+void RS485Comm::SetSwitchRefreshIdleMs(uint32_t idleMs) {
+  m_switchRefreshIdleMs = idleMs;
+  m_nextSwitchRefreshAt =
+      idleMs == 0
+          ? std::chrono::steady_clock::time_point::max()
+          : std::chrono::steady_clock::now() + std::chrono::milliseconds(idleMs);
 }
 
 void RS485Comm::SetCoilHoldFrames(uint8_t holdFrames) {
@@ -254,6 +263,11 @@ void RS485Comm::Run() {
   m_nextSwitchPollAt =
       std::chrono::steady_clock::now() +
       std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS);
+  m_nextSwitchRefreshAt =
+      m_switchRefreshIdleMs == 0
+          ? std::chrono::steady_clock::time_point::max()
+          : std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(m_switchRefreshIdleMs);
   m_pThread = new std::thread([this]() {
     LogMessage("RS485Comm run thread starting");
 
@@ -295,10 +309,13 @@ void RS485Comm::Run() {
       if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
         nextBoard = m_switchBoards[0];
       }
+      const bool sendSwitchRefresh =
+          nextBoard != ppuc::v2::kNoBoard && m_switchRefreshIdleMs > 0 &&
+          now >= m_nextSwitchRefreshAt;
 
       QueuedOutputSnapshot snapshot;
       bool haveQueuedSnapshot = false;
-      {
+      if (!sendSwitchRefresh) {
         std::lock_guard<std::mutex> lock(m_outputQueueMutex);
         if (!m_outputSnapshots.empty()) {
           snapshot = m_outputSnapshots.front();
@@ -331,17 +348,25 @@ void RS485Comm::Run() {
         ApplyCoilHoldover(coilBitmap, holdFrames);
       }
 
-      const bool sent = SendOutputStateFrameFromBuffers(nextBoard, coilBitmap,
-                                                        lampBitmap, giLevels);
+      const bool sent =
+          sendSwitchRefresh
+              ? SendSwitchRefreshFrame(nextBoard)
+              : SendOutputStateFrameFromBuffers(nextBoard, coilBitmap,
+                                                lampBitmap, giLevels);
       if (!sent) {
         continue;
       }
-      {
+      if (!sendSwitchRefresh) {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         ConsumeCoilHoldoverLocked(holdFrames);
       }
       if (nextBoard != ppuc::v2::kNoBoard) {
         ReceiveSwitchStateChain(nextBoard);
+        if (sendSwitchRefresh && m_switchRefreshIdleMs > 0) {
+          m_nextSwitchRefreshAt =
+              std::chrono::steady_clock::now() +
+              std::chrono::milliseconds(m_switchRefreshIdleMs);
+        }
       }
     }
 
@@ -862,6 +887,7 @@ bool RS485Comm::SetVirtualSwitchState(uint16_t number, uint8_t state) {
 
     boardState.switchStates[i] = normalizedState;
     boardState.dirty = true;
+    NoteSwitchActivity(number);
     {
       std::lock_guard<std::mutex> lock(m_stateMutex);
       const auto switchIt = m_switchNumberToIndex.find(number);
@@ -914,6 +940,10 @@ void RS485Comm::SetMappings(const std::vector<uint16_t>& coils,
   }
 
   RebuildSwitchOwnershipMasks();
+}
+
+void RS485Comm::SetButtonSwitchNumbers(const std::set<uint16_t>& numbers) {
+  m_buttonSwitchNumbers = numbers;
 }
 
 PPUCSwitchState* RS485Comm::GetNextSwitchState() {
@@ -1393,6 +1423,32 @@ bool RS485Comm::SendRestartFrame() {
   return false;
 }
 
+bool RS485Comm::SendSwitchRefreshFrame(uint8_t nextBoard) {
+  if (m_pSerialPort == NULL ||
+      !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig) ||
+      !ppuc::v2::IsValidBoard(nextBoard)) {
+    return false;
+  }
+
+  uint8_t buffer[ppuc::v2::kSwitchRefreshFrameBytes];
+  buffer[0] = ppuc::v2::kSyncByte;
+  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameSwitchRefresh,
+                                            ppuc::v2::kFlagNone);
+  buffer[2] = nextBoard;
+  buffer[3] = m_sequence++;
+  buffer[4] = m_epoch;
+  m_lastOutputSequenceSent = buffer[3];
+  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
+  buffer[5] = static_cast<uint8_t>((crc >> 8) & 0xff);
+  buffer[6] = static_cast<uint8_t>(crc & 0xff);
+
+  if (m_debug) {
+    DebugPrintf("Sent V2 SwitchRefreshFrame seq=%u firstBoard=%u", buffer[3],
+                nextBoard);
+  }
+  return WriteBytes("SwitchRefreshFrame", buffer, sizeof(buffer));
+}
+
 bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
                                  uint16_t number) {
   if (m_pSerialPort == NULL) {
@@ -1525,6 +1581,7 @@ void RS485Comm::ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap,
       if (n < m_switchIndexToNumber.size()) {
         switchNumber = m_switchIndexToNumber[n];
       }
+      NoteSwitchActivity(static_cast<uint16_t>(switchNumber));
       std::lock_guard<std::mutex> lock(m_switchesQueueMutex);
       m_switches.push(new PPUCSwitchState(switchNumber, newState ? 1 : 0));
     }
@@ -1540,6 +1597,16 @@ void RS485Comm::ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap,
     m_switchBitmap[i] = static_cast<uint8_t>((m_switchBitmap[i] & ~mask) |
                                              (bitmap[i] & mask));
   }
+}
+
+void RS485Comm::NoteSwitchActivity(uint16_t switchNumber) {
+  if (m_switchRefreshIdleMs == 0 ||
+      m_buttonSwitchNumbers.find(switchNumber) != m_buttonSwitchNumbers.end()) {
+    return;
+  }
+  m_nextSwitchRefreshAt =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(m_switchRefreshIdleMs);
 }
 
 bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
