@@ -40,6 +40,7 @@ class PPUCAPI PPUC {
   void SetSkippedBoardsCsv(const char* skippedBoardsCsv);
   void SetSwitchReplyDelayUs(uint32_t delayUs);
   void SetSwitchRefreshIdleMs(uint32_t idleMs);
+  void SetOutputFrameIntervalMs(uint32_t intervalMs);
   void SetCoilHoldFrames(uint8_t holdFrames);
   void SetDisableFastFlipForTests(bool disableFastFlipForTests);
   void SetForceHardReset(bool forceHardReset);

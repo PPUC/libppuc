@@ -25,7 +25,7 @@
 #define CALLBACK
 #endif
 
-#define RS485_COMM_BAUD_RATE 115200
+static constexpr uint32_t RS485_COMM_BAUD_RATE = ppuc::v2::kBaudRate;
 #define RS485_COMM_SERIAL_READ_TIMEOUT 5
 #define RS485_COMM_SERIAL_WRITE_TIMEOUT 20
 
@@ -42,7 +42,7 @@
 #define RS485_COMM_QUEUE_SIZE_MAX 128
 #define RS485_COMM_OUTPUT_QUEUE_SIZE_MAX 256
 #define RS485_COMM_MAX_EVENTS_TO_SEND 32
-#define RS485_COMM_OUTPUT_FRAME_INTERVAL_MS 4
+static constexpr uint32_t RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS = 4;
 #define RS485_COMM_EFFECT_EVENT_SPACING_US 1000
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 3
 #define RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS 250
@@ -113,6 +113,7 @@ class RS485Comm {
   void SetDebugErrors(bool debugErrors);
   void SetSwitchReplyDelayUs(uint32_t delayUs);
   void SetSwitchRefreshIdleMs(uint32_t idleMs);
+  void SetOutputFrameIntervalMs(uint32_t intervalMs);
   void SetCoilHoldFrames(uint8_t holdFrames);
 
  private:
@@ -179,6 +180,7 @@ class RS485Comm {
   uint8_t m_switchReplyMisses = 0;
   uint32_t m_switchReplyDelayUs = 0;
   uint32_t m_switchRefreshIdleMs = 0;
+  uint32_t m_outputFrameIntervalMs = RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS;
   ppuc::v2::RuntimeConfig m_runtimeConfig;
   std::vector<uint16_t> m_coilIndexToNumber;
   std::vector<uint16_t> m_lampIndexToNumber;

@@ -160,6 +160,11 @@ void RS485Comm::SetSwitchRefreshIdleMs(uint32_t idleMs) {
           : std::chrono::steady_clock::now() + std::chrono::milliseconds(idleMs);
 }
 
+void RS485Comm::SetOutputFrameIntervalMs(uint32_t intervalMs) {
+  m_outputFrameIntervalMs =
+      intervalMs == 0 ? RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS : intervalMs;
+}
+
 void RS485Comm::SetCoilHoldFrames(uint8_t holdFrames) {
   std::lock_guard<std::mutex> lock(m_stateMutex);
   m_coilHoldFrameCount = holdFrames;
@@ -326,7 +331,7 @@ void RS485Comm::Run() {
 
       if (!haveQueuedSnapshot) {
         std::this_thread::sleep_for(
-            std::chrono::milliseconds(RS485_COMM_OUTPUT_FRAME_INTERVAL_MS));
+            std::chrono::milliseconds(m_outputFrameIntervalMs));
       }
 
       uint8_t coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};

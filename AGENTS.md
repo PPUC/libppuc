@@ -23,6 +23,8 @@ Main files:
 - `src/RS485Comm.h`: transport state, runtime bitmaps, queueing, protocol API.
 - `src/RS485Comm.cpp`: RS485 serial transport and `v2` frame handling.
 - `src/PPUC_structs.h`: public structs exposed to callers.
+- Host serial baud should come from the shared protocol constant
+  `ppuc::v2::kBaudRate`, not from an independent host-only value.
 
 Optional YAML metadata parsed here:
 

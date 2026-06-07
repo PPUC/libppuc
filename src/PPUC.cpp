@@ -158,6 +158,10 @@ void PPUC::SetCoilHoldFrames(uint8_t holdFrames) {
   m_pRS485Comm->SetCoilHoldFrames(holdFrames);
 }
 
+void PPUC::SetOutputFrameIntervalMs(uint32_t intervalMs) {
+  m_pRS485Comm->SetOutputFrameIntervalMs(intervalMs);
+}
+
 void PPUC::SetDisableFastFlipForTests(bool disableFastFlipForTests) {
   m_disableFastFlipForTests = disableFastFlipForTests;
 }
