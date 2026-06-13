@@ -14,7 +14,7 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - id: version
@@ -35,11 +35,8 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            platform: win
+            platform: win-mingw
             arch: x64
-          - os: windows-latest
-            platform: win
-            arch: x86
           - os: macos-latest
             platform: macos
             arch: arm64
@@ -53,34 +50,49 @@ jobs:
             platform: linux
             arch: aarch64
     steps:
-      - uses: actions/checkout@v4
-      - if: (matrix.platform == 'win')
-        name: Add msbuild to path (win runner)
-        uses: microsoft/setup-msbuild@v2
+      - uses: actions/checkout@v6
+      - if: (matrix.platform == 'win-mingw')
+        name: Set up MSYS2 MinGW (win runner)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            autoconf
+            automake
+            git
+            libtool
+            unzip
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkg-config
       - if: (matrix.platform == 'macos')
         name: Add autoconf and automake (mac runner)
         run: |
            brew install autoconf automake libtool
-      - if: (!(matrix.platform == 'linux' && matrix.arch == 'aarch64'))
+      - if: (matrix.platform == 'win-mingw')
+        name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
+        shell: msys2 {0}
+        run: |
+          BUILD_TYPE=Release ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
+          cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLATFORM=${{ matrix.platform }} \
+            -DARCH=${{ matrix.arch }} \
+            -B build
+          cmake --build build -- -j$(nproc)
+      - if: (!(matrix.platform == 'linux' && matrix.arch == 'aarch64') && matrix.platform != 'win-mingw')
         name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
         run: |
-          ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
-          if [[ "${{ matrix.platform }}" == "win" ]]; then
-             if [[ "${{ matrix.arch }}" == "x64" ]]; then
-                cmake -G "Visual Studio 17 2022" -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
-             else
-                cmake -G "Visual Studio 17 2022" -A Win32 -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
-             fi
-             cmake --build build --config Release
+          BUILD_TYPE=Release ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
+          if [[ "$(uname)" == "Darwin" ]]; then
+             NUM_PROCS=$(sysctl -n hw.ncpu)
           else
-             if [[ "$(uname)" == "Darwin" ]]; then
-                NUM_PROCS=$(sysctl -n hw.ncpu)
-             else
-                NUM_PROCS=$(nproc)
-             fi
-             cmake -DCMAKE_BUILD_TYPE=Release -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
-             cmake --build build -- -j${NUM_PROCS}
+             NUM_PROCS=$(nproc)
           fi
+          cmake -DCMAKE_BUILD_TYPE=Release -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
+          cmake --build build -- -j${NUM_PROCS}
       - if: (matrix.platform == 'linux' && matrix.arch == 'aarch64')
         name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }} (arm runner)
         uses: pguyot/arm-runner-action@v2
@@ -93,7 +105,7 @@ jobs:
           commands: |
             apt-get update -y --allow-releaseinfo-change
             apt-get install --no-install-recommends -y pkg-config cmake autoconf automake libtool
-            ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
+            BUILD_TYPE=Release ./platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
             NUM_PROCS=$(nproc)
             cmake -DCMAKE_BUILD_TYPE=Release -DPLATFORM=${{ matrix.platform }} -DARCH=${{ matrix.arch }} -B build
             cmake --build build -- -j${NUM_PROCS}
@@ -101,25 +113,22 @@ jobs:
         id: artifacts
         run: |
           mkdir tmp
-          if [[ "${{ matrix.platform }}" == "win" ]]; then
-            ARTIFACT_PATH="tmp"
-            cp build/Release/*.lib tmp
-            #cp build/Release/*.dll tmp
-          else
-            ARTIFACT_PATH="libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
-            if [[ "${{ matrix.platform }}" == "macos" ]]; then
-              cp build/*.a tmp
-              cp build/*.dylib tmp
-            elif [[ "${{ matrix.platform }}" == "linux" ]]; then
-              cp build/*.a tmp
-              cp build/*.so.* tmp
-            fi
-            cd tmp
-            tar -czvf ../${ARTIFACT_PATH} *
+          ARTIFACT_PATH="libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          if [[ "${{ matrix.platform }}" == "win-mingw" ]]; then
+            cp build/*.a tmp
+            cp build/*.dll tmp
+          elif [[ "${{ matrix.platform }}" == "macos" ]]; then
+            cp build/*.a tmp
+            cp build/*.dylib tmp
+          elif [[ "${{ matrix.platform }}" == "linux" ]]; then
+            cp build/*.a tmp
+            cp build/*.so.* tmp
           fi
+          cd tmp
+          tar -czvf ../${ARTIFACT_PATH} *
           echo "artifact_path=${ARTIFACT_PATH}" >> $GITHUB_OUTPUT
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libppuc-${{ needs.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ steps.artifacts.outputs.artifact_path }}
@@ -129,7 +138,7 @@ jobs:
     needs: [ version, build ]
     name: Build libppuc-macos
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
       - name: Unpack artifacts
         run: |
           cd libppuc-${{ needs.version.outputs.tag }}-macos-x64
@@ -155,23 +164,17 @@ jobs:
           cd tmp
           tar -czvf ../libppuc-${{ needs.version.outputs.tag }}-macos.tar.gz *
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libppuc-${{ needs.version.outputs.tag }}-macos
           path: libppuc-${{ needs.version.outputs.tag }}-macos.tar.gz
-      - name: Package
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          zip -r libppuc-${{ needs.version.outputs.tag }}-win-x64.zip libppuc-${{ needs.version.outputs.tag }}-win-x64
-          zip -r libppuc-${{ needs.version.outputs.tag }}-win-x86.zip libppuc-${{ needs.version.outputs.tag }}-win-x86
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           draft: true
           files: |
-            libppuc-${{ needs.version.outputs.tag }}-win-x64.zip
-            libppuc-${{ needs.version.outputs.tag }}-win-x86.zip
+            libppuc-${{ needs.version.outputs.tag }}-win-mingw-x64/libppuc-${{ needs.version.outputs.tag }}-win-mingw-x64.tar.gz
             libppuc-${{ needs.version.outputs.tag }}-macos-arm64/libppuc-${{ needs.version.outputs.tag }}-macos-arm64.tar.gz
             libppuc-${{ needs.version.outputs.tag }}-macos-x64/libppuc-${{ needs.version.outputs.tag }}-macos-x64.tar.gz
             libppuc-${{ needs.version.outputs.tag }}-macos.tar.gz

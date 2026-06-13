@@ -27,10 +27,12 @@ struct PPUCSwitch {
   uint8_t board;
   uint8_t port;
   uint8_t number;
+  bool button;
   std::string description;
 
-  PPUCSwitch(uint8_t b, uint8_t p, uint8_t n, const std::string& d)
-  : board(b), port(p), number(n), description(d) {}
+  PPUCSwitch(uint8_t b, uint8_t p, uint8_t n, const std::string& d,
+             bool btn = false)
+  : board(b), port(p), number(n), button(btn), description(d) {}
 };
 
 struct PPUCCoil {
@@ -38,10 +40,12 @@ struct PPUCCoil {
   uint8_t port;
   uint8_t type;
   uint8_t number;
+  bool ballSearch;
   std::string description;
 
-  PPUCCoil(uint8_t b, uint8_t p, uint8_t t, uint8_t n,const std::string& d)
-  : board(b), port(p), type(t), number(n), description(d) {}
+  PPUCCoil(uint8_t b, uint8_t p, uint8_t t, uint8_t n, const std::string& d,
+           bool bs = false)
+  : board(b), port(p), type(t), number(n), ballSearch(bs), description(d) {}
 };
 
 struct PPUCLamp {

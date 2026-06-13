@@ -4,22 +4,17 @@ set -e
 
 source ./platforms/config.sh
 
-NUM_PROCS=$(sysctl -n hw.ncpu)
-
 echo "Building libraries..."
 echo "  IO_BOARDS_SHA: ${IO_BOARDS_SHA}"
 echo "  LIBSERIALPORT_SHA: ${LIBSERIALPORT_SHA}"
 echo "  YAML_CPP_SHA: ${YAML_CPP_SHA}"
-echo "  NUM_PROCS: ${NUM_PROCS}"
 echo ""
 
-rm -rf external
-mkdir external
-cd external
+NUM_PROCS=$(nproc)
 
-#
-# get io-boards includes
-#
+rm -rf external
+mkdir -p external third-party/include/io-boards third-party/build-libs/win-mingw/x64 third-party/runtime-libs/win-mingw/x64
+cd external
 
 curl -sL https://github.com/PPUC/io-boards/archive/${IO_BOARDS_SHA}.zip -o io-boards.zip
 unzip io-boards.zip
@@ -30,37 +25,35 @@ cp src/PPUCProtocolV2.h ../../third-party/include/io-boards/
 cp src/EventDispatcher/Event.h ../../third-party/include/io-boards/
 cd ..
 
-#
-# build libserialport and copy to platform/arch
-#
-
 curl -sL https://github.com/sigrokproject/libserialport/archive/${LIBSERIALPORT_SHA}.zip -o libserialport.zip
 unzip libserialport.zip
 cd libserialport-${LIBSERIALPORT_SHA}
 cp libserialport.h ../../third-party/include/
 ./autogen.sh
-./configure --host=x86_64-apple-darwin CFLAGS="-arch x86_64" LDFLAGS="-Wl,-install_name,@rpath/libserialport.dylib"
+./configure --enable-shared
 make -j${NUM_PROCS}
-cp .libs/libserialport.a ../../third-party/build-libs/macos/x64/
-cp .libs/libserialport.dylib ../../third-party/runtime-libs/macos/x64/
+cp .libs/libserialport.dll.a ../../third-party/build-libs/win-mingw/x64/libserialport64.dll.a
+cp .libs/libserialport-0.dll ../../third-party/runtime-libs/win-mingw/x64/libserialport64-0.dll
 cd ..
-
-#
-# build libyaml-cpp and copy to platform/arch
-#
 
 curl -sL https://github.com/jbeder/yaml-cpp/archive/${YAML_CPP_SHA}.zip -o yaml-cpp.zip
 unzip yaml-cpp.zip
-
 cd yaml-cpp-${YAML_CPP_SHA}
 cp -r include/yaml-cpp ../../third-party/include/
-cmake -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+cmake \
+  -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
   -DYAML_BUILD_SHARED_LIBS=ON \
   -DYAML_CPP_BUILD_CONTRIB=OFF \
   -DYAML_CPP_BUILD_TOOLS=OFF \
   -DYAML_CPP_FORMAT_SOURCE=OFF \
   -DYAML_CPP_INSTALL=OFF \
   -B build
-cmake --build build --config Release
-cp -P build/libyaml-cpp*.dylib ../../third-party/runtime-libs/macos/x64/
+cmake --build build -- -j${NUM_PROCS}
+cp build/libyaml-cpp.dll.a ../../third-party/build-libs/win-mingw/x64/
+cp build/libyaml-cpp.dll ../../third-party/runtime-libs/win-mingw/x64/
 cd ..
+
+UCRT64_BIN="${MINGW_PREFIX}/bin"
+cp "${UCRT64_BIN}/libgcc_s_seh-1.dll" ../third-party/runtime-libs/win-mingw/x64/
+cp "${UCRT64_BIN}/libstdc++-6.dll" ../third-party/runtime-libs/win-mingw/x64/
+cp "${UCRT64_BIN}/libwinpthread-1.dll" ../third-party/runtime-libs/win-mingw/x64/

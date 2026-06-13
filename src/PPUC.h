@@ -22,6 +22,8 @@
 #include "PPUC_structs.h"
 #include "yaml-cpp/yaml.h"
 
+#include <set>
+
 class RS485Comm;
 
 class PPUCAPI PPUC {
@@ -34,6 +36,14 @@ class PPUCAPI PPUC {
 
   void LoadConfiguration(const char* configFile);
   void SetDebug(bool debug);
+  void SetDebugErrors(bool debugErrors);
+  void SetSkippedBoardsCsv(const char* skippedBoardsCsv);
+  void SetSwitchReplyDelayUs(uint32_t delayUs);
+  void SetSwitchRefreshIdleMs(uint32_t idleMs);
+  void SetOutputFrameIntervalMs(uint32_t intervalMs);
+  void SetCoilHoldFrames(uint8_t holdFrames);
+  void SetDisableFastFlipForTests(bool disableFastFlipForTests);
+  void SetForceHardReset(bool forceHardReset);
   bool GetDebug();
   void SetRom(const char* rom);
   const char* GetRom();
@@ -46,16 +56,17 @@ class PPUCAPI PPUC {
 
   void SetSolenoidState(int number, int state);
   void SetLampState(int number, int state);
+  void SetGIState(int string, int brightness);
+  void SetSwitchState(int number, int state);
+  void TriggerEvent(uint8_t source, int number, int value);
+  bool IsSwitchVirtualized(int number);
+  bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
+  uint32_t GetCleanSwitchReplyChainCount();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
-
-  void CoilTest(uint8_t number);
-  void LampTest(uint8_t number);
-  void FlasherTest(uint8_t number);
-  void GITest(uint8_t number);
-  void SwitchTest();
+  uint8_t GetPlatform() { return m_platform; };
 
   std::vector<PPUCCoil> GetCoils();
   std::vector<PPUCLamp> GetLamps();
@@ -65,6 +76,7 @@ class PPUCAPI PPUC {
   YAML::Node m_ppucConfig;
   RS485Comm* m_pRS485Comm;
   uint8_t ResolveLedType(std::string type);
+  uint32_t ResolveSwitchDebounceMode(const YAML::Node& node);
   std::vector<PPUCCoil> m_coils;
   std::vector<PPUCLamp> m_lamps;
   std::vector<PPUCSwitch> m_switches;
@@ -75,9 +87,14 @@ class PPUCAPI PPUC {
   uint8_t m_platform;
   uint8_t m_coinDoorClosedSwitch;
   uint8_t m_gameOnSolenoid;
+  uint32_t m_switchReplyDelayUs = 0;
+  uint32_t m_switchRefreshIdleMs = 0;
+  uint8_t m_coilHoldFrames = 3;
+  bool m_disableFastFlipForTests = false;
+  bool m_forceHardReset = false;
+  std::set<uint8_t> m_skippedBoards;
 
-  void SendTriggerConfigBlock(const YAML::Node& items, uint32_t type,
-                              uint8_t board, uint32_t port);
   void SendLedConfigBlock(const YAML::Node& items, uint32_t type, uint8_t board,
                           uint32_t port);
+  bool AbortConfigurationEarly() const;
 };

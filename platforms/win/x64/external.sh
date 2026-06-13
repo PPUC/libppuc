@@ -23,6 +23,7 @@ unzip io-boards.zip
 cd io-boards-${IO_BOARDS_SHA}
 cp src/PPUCTimings.h ../../third-party/include/io-boards/
 cp src/PPUCPlatforms.h ../../third-party/include/io-boards/
+cp src/PPUCProtocolV2.h ../../third-party/include/io-boards/
 cp src/EventDispatcher/Event.h ../../third-party/include/io-boards/
 cd ..
 
