@@ -59,7 +59,10 @@ jobs:
           update: true
           install: >-
             base-devel
+            autoconf
+            automake
             git
+            libtool
             unzip
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-gcc
