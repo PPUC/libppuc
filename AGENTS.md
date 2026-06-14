@@ -30,6 +30,10 @@ Optional YAML metadata parsed here:
 
 - switches support `button: true`; `libppuc` exposes it through `PPUCSwitch::button` so applications can treat cabinet/flipper controls differently from playfield/ball switches.
 - PWM outputs/coils support `ballSearch: true`; `libppuc` exposes it through `PPUCCoil::ballSearch`, but does not fire ball-search coils itself.
+- YAML schema validation lives in `src/PPUC.cpp` and must be kept in sync with
+  every config feature. Whenever a new YAML section, field, accepted type, or
+  optional metadata key is added, extend the validation pass so malformed config
+  files fail early with the relevant section path and YAML line/column.
 
 ## Build And Validation
 

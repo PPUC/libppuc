@@ -4,6 +4,9 @@
 #include <cctype>
 #include <cstring>
 #include <set>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 
 #include "Adafruit_NeoPixel.h"
@@ -11,6 +14,406 @@
 #include "io-boards/PPUCProtocolV2.h"
 #include "io-boards/Event.h"
 #include "io-boards/PPUCPlatforms.h"
+
+namespace {
+
+std::string FormatYamlLocation(const YAML::Mark& mark) {
+  if (mark.is_null()) {
+    return "unknown location";
+  }
+
+  std::stringstream ss;
+  ss << "line " << (mark.line + 1) << ", column " << (mark.column + 1);
+  return ss.str();
+}
+
+const char* LedConfigBlockName(uint32_t type) {
+  switch (type) {
+    case LED_TYPE_LAMP:
+      return "ledStripes.lamps";
+    case LED_TYPE_FLASHER:
+      return "ledStripes.flashers";
+    case LED_TYPE_GI:
+      return "ledStripes.gi";
+    default:
+      return "ledStripes.<unknown>";
+  }
+}
+
+std::string OptionalStringField(const YAML::Node& node, const char* field) {
+  try {
+    if (node && node[field]) {
+      return node[field].as<std::string>();
+    }
+  } catch (const YAML::Exception&) {
+  }
+  return "";
+}
+
+std::string ConfigItemContext(const YAML::Node& item, const std::string& path) {
+  std::stringstream ss;
+  ss << path;
+
+  const std::string description = OptionalStringField(item, "description");
+  if (!description.empty()) {
+    ss << ", description '" << description << "'";
+  }
+
+  ss << " (" << FormatYamlLocation(item.Mark()) << ")";
+  return ss.str();
+}
+
+std::string LedConfigItemContext(const YAML::Node& item, uint32_t type,
+                                 uint8_t board, uint32_t port,
+                                 size_t itemIndex) {
+  std::stringstream ss;
+  ss << LedConfigBlockName(type) << "[" << itemIndex << "]"
+     << " on board " << static_cast<unsigned>(board) << ", port " << port;
+
+  const std::string description = OptionalStringField(item, "description");
+  if (!description.empty()) {
+    ss << ", description '" << description << "'";
+  }
+
+  ss << " (" << FormatYamlLocation(item.Mark()) << ")";
+  return ss.str();
+}
+
+void RequireYamlNode(const YAML::Node& node, const std::string& path) {
+  if (!node) {
+    throw std::runtime_error("invalid YAML configuration: missing required '" +
+                             path + "'");
+  }
+}
+
+template <typename T>
+T ReadRequiredYamlField(const YAML::Node& item, const char* field,
+                        const std::string& context) {
+  const YAML::Node value = item[field];
+  if (!value) {
+    throw std::runtime_error("invalid YAML configuration: " + context +
+                             " is missing required field '" + field + "'");
+  }
+
+  try {
+    return value.as<T>();
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error("invalid YAML configuration: " + context +
+                             " has invalid field '" + field + "' at " +
+                             FormatYamlLocation(value.Mark()) + ": " +
+                             e.what());
+  }
+}
+
+uint32_t ParseRequiredHexColorField(const YAML::Node& item, const char* field,
+                                    const std::string& context) {
+  const std::string value =
+      ReadRequiredYamlField<std::string>(item, field, context);
+
+  uint32_t color = 0;
+  std::stringstream ss;
+  ss << std::hex << value;
+  ss >> color;
+  if (ss.fail() || !ss.eof()) {
+    throw std::runtime_error("invalid YAML configuration: " + context +
+                             " has invalid field '" + field +
+                             "': expected hexadecimal color, got '" + value +
+                             "'");
+  }
+  return color;
+}
+
+template <typename T>
+void ValidateRequiredField(const YAML::Node& item, const std::string& path,
+                           const char* field) {
+  ReadRequiredYamlField<T>(item, field, ConfigItemContext(item, path));
+}
+
+template <typename T>
+void ValidateOptionalField(const YAML::Node& item, const std::string& path,
+                           const char* field) {
+  const YAML::Node value = item[field];
+  if (!value) {
+    return;
+  }
+
+  try {
+    value.as<T>();
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error("invalid YAML configuration: " +
+                             ConfigItemContext(item, path) +
+                             " has invalid field '" + field + "' at " +
+                             FormatYamlLocation(value.Mark()) + ": " +
+                             e.what());
+  }
+}
+
+void ValidateRequiredSequence(const YAML::Node& node,
+                              const std::string& path) {
+  RequireYamlNode(node, path);
+  if (!node.IsSequence()) {
+    throw std::runtime_error("invalid YAML configuration: '" + path +
+                             "' must be a list at " +
+                             FormatYamlLocation(node.Mark()));
+  }
+}
+
+void ValidateOptionalSequence(const YAML::Node& node,
+                              const std::string& path) {
+  if (!node) {
+    return;
+  }
+  if (!node.IsSequence()) {
+    throw std::runtime_error("invalid YAML configuration: '" + path +
+                             "' must be a list at " +
+                             FormatYamlLocation(node.Mark()));
+  }
+}
+
+void ValidateRequiredMap(const YAML::Node& node, const std::string& path) {
+  RequireYamlNode(node, path);
+  if (!node.IsMap()) {
+    throw std::runtime_error("invalid YAML configuration: '" + path +
+                             "' must be a map at " +
+                             FormatYamlLocation(node.Mark()));
+  }
+}
+
+void ValidateEffectModeField(const YAML::Node& item, const std::string& path,
+                             const char* field) {
+  const YAML::Node value = item[field];
+  if (!value) {
+    throw std::runtime_error("invalid YAML configuration: " +
+                             ConfigItemContext(item, path) +
+                             " is missing required field '" + field + "'");
+  }
+
+  try {
+    value.as<std::string>();
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error("invalid YAML configuration: " +
+                             ConfigItemContext(item, path) +
+                             " has invalid field '" + field + "' at " +
+                             FormatYamlLocation(value.Mark()) + ": " +
+                             e.what());
+  }
+}
+
+template <typename Callback>
+void ValidateOptionalItems(const YAML::Node& parent, const char* field,
+                           const std::string& parentPath,
+                           Callback callback) {
+  const YAML::Node items = parent[field];
+  const std::string path = parentPath + "." + field;
+  ValidateOptionalSequence(items, path);
+  if (!items) {
+    return;
+  }
+
+  size_t index = 0;
+  for (YAML::Node item : items) {
+    const std::string itemPath =
+        path + "[" + std::to_string(index++) + "]";
+    ValidateRequiredMap(item, itemPath);
+    callback(item, itemPath);
+  }
+}
+
+void ValidateLedConfigBlock(const YAML::Node& ledStripe, const char* field,
+                            const std::string& ledStripePath) {
+  ValidateOptionalItems(ledStripe, field, ledStripePath,
+                        [](const YAML::Node& item,
+                           const std::string& itemPath) {
+                          ValidateRequiredField<std::string>(
+                              item, itemPath, "description");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "number");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "ledNumber");
+                          ParseRequiredHexColorField(
+                              item, "color", ConfigItemContext(item, itemPath));
+                        });
+}
+
+void ValidateNamedEffectTriggerFields(const YAML::Node& effect,
+                                      const std::string& effectPath) {
+  ValidateOptionalField<std::string>(effect, effectPath, "name");
+  ValidateOptionalField<uint32_t>(effect, effectPath, "value");
+}
+
+void ValidatePpucConfiguration(const YAML::Node& config) {
+  ValidateRequiredMap(config, "root");
+  ValidateRequiredField<bool>(config, "root", "debug");
+  ValidateRequiredField<std::string>(config, "root", "rom");
+  ValidateRequiredField<std::string>(config, "root", "serialPort");
+  ValidateRequiredField<std::string>(config, "root", "platform");
+  ValidateRequiredField<uint8_t>(config, "root", "coinDoorClosedSwitch");
+  ValidateRequiredField<uint8_t>(config, "root", "gameOnSolenoid");
+
+  const YAML::Node boards = config["boards"];
+  ValidateRequiredSequence(boards, "boards");
+  size_t boardIndex = 0;
+  for (YAML::Node board : boards) {
+    const std::string path = "boards[" + std::to_string(boardIndex++) + "]";
+    ValidateRequiredMap(board, path);
+    ValidateRequiredField<uint8_t>(board, path, "number");
+    ValidateRequiredField<bool>(board, path, "pollEvents");
+  }
+
+  const YAML::Node switchMatrix = config["switchMatrix"];
+  if (switchMatrix) {
+    ValidateRequiredMap(switchMatrix, "switchMatrix");
+    ValidateRequiredField<uint8_t>(switchMatrix, "switchMatrix", "board");
+    ValidateRequiredField<bool>(switchMatrix, "switchMatrix", "activeLow");
+    ValidateRequiredField<uint8_t>(switchMatrix, "switchMatrix", "numRows");
+    ValidateOptionalItems(
+        switchMatrix, "switches", "switchMatrix",
+        [](const YAML::Node& item, const std::string& itemPath) {
+          ValidateRequiredField<std::string>(item, itemPath, "description");
+          ValidateRequiredField<uint8_t>(item, itemPath, "board");
+          ValidateRequiredField<uint32_t>(item, itemPath, "port");
+          ValidateRequiredField<uint32_t>(item, itemPath, "number");
+          ValidateOptionalField<bool>(item, itemPath, "button");
+        });
+  }
+
+  ValidateOptionalItems(config, "switches", "root",
+                        [](const YAML::Node& item,
+                           const std::string& itemPath) {
+                          ValidateRequiredField<std::string>(
+                              item, itemPath, "description");
+                          ValidateRequiredField<uint8_t>(
+                              item, itemPath, "board");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "port");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "number");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "debounce");
+                          ValidateOptionalField<std::string>(
+                              item, itemPath, "debounceMode");
+                          ValidateOptionalField<std::string>(
+                              item, itemPath, "debounce_mode");
+                          ValidateOptionalField<bool>(
+                              item, itemPath, "button");
+                        });
+
+  ValidateOptionalItems(config, "pwmOutput", "root",
+                        [](const YAML::Node& item,
+                           const std::string& itemPath) {
+                          ValidateRequiredField<std::string>(
+                              item, itemPath, "description");
+                          ValidateRequiredField<uint8_t>(
+                              item, itemPath, "board");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "port");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "number");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "power");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "minPulseTime");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "maxPulseTime");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "holdPower");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "holdPowerActivationTime");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "fastFlipSwitch");
+                          ValidateRequiredField<std::string>(
+                              item, itemPath, "type");
+                          ValidateOptionalField<bool>(
+                              item, itemPath, "ballSearch");
+                          ValidateOptionalItems(
+                              item, "effects", itemPath,
+                              [](const YAML::Node& effect,
+                                 const std::string& effectPath) {
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "duration");
+                                ValidateEffectModeField(
+                                    effect, effectPath, "effect");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "frequency");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "maxIntensity");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "minIntensity");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "mode");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "priority");
+                                ValidateRequiredField<int16_t>(
+                                    effect, effectPath, "repeat");
+                                ValidateNamedEffectTriggerFields(
+                                    effect, effectPath);
+                              });
+                        });
+
+  ValidateOptionalItems(config, "ledStripes", "root",
+                        [](const YAML::Node& item,
+                           const std::string& itemPath) {
+                          ValidateRequiredField<uint8_t>(
+                              item, itemPath, "board");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "port");
+                          ValidateRequiredField<std::string>(
+                              item, itemPath, "ledType");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "brightness");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "amount");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "afterGlow");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "lightUp");
+
+                          ValidateOptionalItems(
+                              item, "segments", itemPath,
+                              [](const YAML::Node& segment,
+                                 const std::string& segmentPath) {
+                                ValidateRequiredField<uint32_t>(
+                                    segment, segmentPath, "number");
+                                ValidateRequiredField<uint32_t>(
+                                    segment, segmentPath, "from");
+                                ValidateRequiredField<uint32_t>(
+                                    segment, segmentPath, "to");
+                              });
+
+                          ValidateOptionalItems(
+                              item, "effects", itemPath,
+                              [](const YAML::Node& effect,
+                                 const std::string& effectPath) {
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "segment");
+                                ParseRequiredHexColorField(
+                                    effect, "color",
+                                    ConfigItemContext(effect, effectPath));
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "duration");
+                                ValidateEffectModeField(
+                                    effect, effectPath, "effect");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "reverse");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "speed");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "mode");
+                                ValidateRequiredField<uint32_t>(
+                                    effect, effectPath, "priority");
+                                ValidateRequiredField<int16_t>(
+                                    effect, effectPath, "repeat");
+                                ValidateNamedEffectTriggerFields(
+                                    effect, effectPath);
+                              });
+
+                          ValidateLedConfigBlock(item, "lamps", itemPath);
+                          ValidateLedConfigBlock(item, "flashers", itemPath);
+                          ValidateLedConfigBlock(item, "gi", itemPath);
+                        });
+}
+
+}  // namespace
 
 PPUC::PPUC() {
   m_rom = (char*)malloc(16);
@@ -72,13 +475,26 @@ uint8_t PPUC::ResolveLedType(std::string type) {
 
 void PPUC::LoadConfiguration(const char* configFile) {
   // Load config file. But options set via command line are preferred.
-  m_ppucConfig = YAML::LoadFile(configFile);
-  m_debug = m_ppucConfig["debug"].as<bool>();
-  std::string c_rom = m_ppucConfig["rom"].as<std::string>();
+  try {
+    m_ppucConfig = YAML::LoadFile(configFile);
+    ValidatePpucConfiguration(m_ppucConfig);
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error(
+        "invalid YAML configuration in '" + std::string(configFile) + "' at " +
+        FormatYamlLocation(e.mark) + ": " + e.what());
+  }
+
+  const std::string rootContext =
+      ConfigItemContext(m_ppucConfig, "root");
+  m_debug = ReadRequiredYamlField<bool>(m_ppucConfig, "debug", rootContext);
+  std::string c_rom =
+      ReadRequiredYamlField<std::string>(m_ppucConfig, "rom", rootContext);
   strcpy(m_rom, c_rom.c_str());
-  std::string c_serial = m_ppucConfig["serialPort"].as<std::string>();
+  std::string c_serial = ReadRequiredYamlField<std::string>(
+      m_ppucConfig, "serialPort", rootContext);
   strcpy(m_serial, c_serial.c_str());
-  std::string c_platform = m_ppucConfig["platform"].as<std::string>();
+  std::string c_platform = ReadRequiredYamlField<std::string>(
+      m_ppucConfig, "platform", rootContext);
   m_platform = PLATFORM_WPC;
   if (strcmp(c_platform.c_str(), "WPC") == 0) {
     m_platform = PLATFORM_WPC;
@@ -315,15 +731,28 @@ void SendNamedEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
 void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
                               uint8_t board, uint32_t port) {
   if (items) {
+    size_t itemIndex = 0;
     for (YAML::Node n_item : items) {
+      const std::string context =
+          LedConfigItemContext(n_item, type, board, port, itemIndex);
+      ++itemIndex;
+
       if (AbortConfigurationEarly()) {
         return;
       }
+      const std::string description =
+          ReadRequiredYamlField<std::string>(n_item, "description", context);
       if (m_debug) {
         // @todo user logger
-        printf("Description: %s\n",
-               n_item["description"].as<std::string>().c_str());
+        printf("Description: %s\n", description.c_str());
       }
+
+      const uint32_t number =
+          ReadRequiredYamlField<uint32_t>(n_item, "number", context);
+      const uint32_t ledNumber =
+          ReadRequiredYamlField<uint32_t>(n_item, "ledNumber", context);
+      const uint32_t color =
+          ParseRequiredHexColorField(n_item, "color", context);
 
       uint8_t index = 0;
       m_pRS485Comm->SendConfigEvent(
@@ -334,28 +763,30 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
                           (uint8_t)CONFIG_TOPIC_TYPE, type));
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
-          (uint8_t)CONFIG_TOPIC_NUMBER, n_item["number"].as<uint32_t>()));
+          (uint8_t)CONFIG_TOPIC_NUMBER, number));
       m_pRS485Comm->SendConfigEvent(
           new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
-                          (uint8_t)CONFIG_TOPIC_LED_NUMBER,
-                          n_item["ledNumber"].as<uint32_t>()));
+                          (uint8_t)CONFIG_TOPIC_LED_NUMBER, ledNumber));
 
-      uint32_t color;
-      std::stringstream ss;
-      ss << std::hex << n_item["color"].as<std::string>();
-      ss >> color;
       m_pRS485Comm->SendConfigEvent(
           new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_LAMPS, index++,
                           (uint8_t)CONFIG_TOPIC_COLOR, color));
 
       m_lamps.push_back(
-          PPUCLamp(board, port, (uint8_t)type, n_item["number"].as<uint8_t>(),
-                   n_item["description"].as<std::string>(), color));
+          PPUCLamp(board, port, (uint8_t)type, static_cast<uint8_t>(number),
+                   description, color));
     }
   }
 }
 
 bool PPUC::Connect() {
+  try {
+    ValidatePpucConfiguration(m_ppucConfig);
+  } catch (const std::exception& e) {
+    printf("PPUC: %s\n", e.what());
+    return false;
+  }
+
   if (!m_pRS485Comm->Connect(m_serial)) {
     return false;
   }
@@ -967,14 +1398,34 @@ bool PPUC::Connect() {
     return true;
   };
 
+  bool startupAttemptHadException = false;
+  auto runStartupAttempt = [&startupAttempt,
+                            &startupAttemptHadException]() -> bool {
+    try {
+      return startupAttempt();
+    } catch (const YAML::Exception& e) {
+      startupAttemptHadException = true;
+      printf("PPUC: invalid YAML configuration at %s: %s\n",
+             FormatYamlLocation(e.mark).c_str(), e.what());
+      return false;
+    } catch (const std::exception& e) {
+      startupAttemptHadException = true;
+      printf("PPUC: %s\n", e.what());
+      return false;
+    }
+  };
+
   if (m_forceHardReset) {
     printf("PPUC: starting board configuration using forced hard reset.\n");
     if (!m_pRS485Comm->ResetBoards()) {
       printf("PPUC: forced hard reset could not be started; startup aborted.\n");
       return false;
     }
-    if (startupAttempt()) {
+    if (runStartupAttempt()) {
       return true;
+    }
+    if (startupAttemptHadException) {
+      return false;
     }
     const std::vector<uint8_t> missingBoards =
         m_pRS485Comm->GetMissingConfiguredBoards();
@@ -1001,8 +1452,11 @@ bool PPUC::Connect() {
     printf("PPUC: soft restart could not be started; startup aborted.\n");
     return false;
   }
-  if (startupAttempt()) {
+  if (runStartupAttempt()) {
     return true;
+  }
+  if (startupAttemptHadException) {
+    return false;
   }
 
   const std::vector<uint8_t> missingBoards =
