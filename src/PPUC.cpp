@@ -202,11 +202,18 @@ void ValidateOptionalSequence(const YAML::Node& node,
   if (!node) {
     return;
   }
+  if (node.IsMap() && node.size() == 0) {
+    return;
+  }
   if (!node.IsSequence()) {
     throw std::runtime_error("invalid YAML configuration: '" + path +
                              "' must be a list at " +
                              FormatYamlLocation(node.Mark()));
   }
+}
+
+bool HasSequenceItems(const YAML::Node& node) {
+  return node && node.IsSequence();
 }
 
 void ValidateRequiredMap(const YAML::Node& node, const std::string& path) {
@@ -245,7 +252,7 @@ void ValidateOptionalItems(const YAML::Node& parent, const char* field,
   const YAML::Node items = parent[field];
   const std::string path = parentPath + "." + field;
   ValidateOptionalSequence(items, path);
-  if (!items) {
+  if (!HasSequenceItems(items)) {
     return;
   }
 
@@ -508,7 +515,7 @@ std::unordered_map<std::string, std::vector<uint16_t>> ParseSwitchGroups(
   std::unordered_map<std::string, std::vector<uint16_t>> groups;
 
   auto addButtonSwitches = [&groups](const YAML::Node& switches) {
-    if (!switches) {
+    if (!HasSequenceItems(switches)) {
       return;
     }
     for (YAML::Node n_switch : switches) {
@@ -829,7 +836,7 @@ void SendNamedEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
 
 void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
                               uint8_t board, uint32_t port) {
-  if (items) {
+  if (HasSequenceItems(items)) {
     size_t itemIndex = 0;
     for (YAML::Node n_item : items) {
       const std::string context =
@@ -953,7 +960,7 @@ bool PPUC::Connect() {
     const YAML::Node& switchMatrix = m_ppucConfig["switchMatrix"];
     if (switchMatrix) {
       const YAML::Node& matrixSwitches = switchMatrix["switches"];
-      if (matrixSwitches) {
+      if (HasSequenceItems(matrixSwitches)) {
         for (YAML::Node n_switch : matrixSwitches) {
           const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
           switchNumbers.insert(switchNumber);
@@ -967,7 +974,7 @@ bool PPUC::Connect() {
     }
 
     const YAML::Node& switches = m_ppucConfig["switches"];
-    if (switches) {
+    if (HasSequenceItems(switches)) {
       for (YAML::Node n_switch : switches) {
         const uint16_t switchNumber = n_switch["number"].as<uint16_t>();
         switchNumbers.insert(switchNumber);
@@ -980,7 +987,7 @@ bool PPUC::Connect() {
     }
 
     const YAML::Node& pwmOutput = m_ppucConfig["pwmOutput"];
-    if (pwmOutput) {
+    if (HasSequenceItems(pwmOutput)) {
       for (YAML::Node n_pwmOutput : pwmOutput) {
         if (isSkippedBoard(n_pwmOutput["board"].as<uint8_t>())) {
           continue;
@@ -996,19 +1003,19 @@ bool PPUC::Connect() {
     }
 
     const YAML::Node& ledStripes = m_ppucConfig["ledStripes"];
-    if (ledStripes) {
+    if (HasSequenceItems(ledStripes)) {
       for (YAML::Node n_ledStripe : ledStripes) {
         if (isSkippedBoard(n_ledStripe["board"].as<uint8_t>())) {
           continue;
         }
         const YAML::Node& lamps = n_ledStripe["lamps"];
-        if (lamps) {
+        if (HasSequenceItems(lamps)) {
           for (YAML::Node n_lamp : lamps) {
             lampNumbers.insert(n_lamp["number"].as<uint16_t>());
           }
         }
         const YAML::Node& flashers = n_ledStripe["flashers"];
-        if (flashers) {
+        if (HasSequenceItems(flashers)) {
           for (YAML::Node n_flasher : flashers) {
             coilNumbers.insert(n_flasher["number"].as<uint16_t>());
           }
@@ -1063,7 +1070,7 @@ bool PPUC::Connect() {
                           switchMatrix["numRows"].as<uint8_t>()));
 
       const YAML::Node& switches = switchMatrix["switches"];
-      if (switches) {
+      if (HasSequenceItems(switches)) {
         for (YAML::Node n_switch : switches) {
           if (m_debug) {
             // @todo user logger
@@ -1098,7 +1105,7 @@ bool PPUC::Connect() {
     }
 
     // Send switch configuration to I/O boards
-    if (switches) {
+    if (HasSequenceItems(switches)) {
       for (YAML::Node n_switch : switches) {
         if (m_debug) {
           // @todo user logger
@@ -1146,7 +1153,7 @@ bool PPUC::Connect() {
     }
 
     // Send PWM configuration to I/O boards
-    if (pwmOutput) {
+    if (HasSequenceItems(pwmOutput)) {
       for (YAML::Node n_pwmOutput : pwmOutput) {
         if (isSkippedBoard(n_pwmOutput["board"].as<uint8_t>())) {
           continue;
@@ -1199,7 +1206,7 @@ bool PPUC::Connect() {
             index++, (uint8_t)CONFIG_TOPIC_TYPE, type));
 
         const YAML::Node& pwm_effects = n_pwmOutput["effects"];
-        if (pwm_effects) {
+        if (HasSequenceItems(pwm_effects)) {
           for (YAML::Node n_pwm_effect : pwm_effects) {
             index = 0;
             m_pRS485Comm->SendConfigEvent(
@@ -1283,7 +1290,7 @@ bool PPUC::Connect() {
     }
 
     // Send LED configuration to I/O boards
-    if (ledStripes) {
+    if (HasSequenceItems(ledStripes)) {
       for (YAML::Node n_ledStripe : ledStripes) {
         if (isSkippedBoard(n_ledStripe["board"].as<uint8_t>())) {
           continue;
@@ -1320,7 +1327,7 @@ bool PPUC::Connect() {
                             n_ledStripe["lightUp"].as<uint32_t>()));
 
         const YAML::Node& segments = n_ledStripe["segments"];
-        if (segments) {
+        if (HasSequenceItems(segments)) {
           for (YAML::Node n_segment : segments) {
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
@@ -1348,7 +1355,7 @@ bool PPUC::Connect() {
         }
 
         const YAML::Node& led_effects = n_ledStripe["effects"];
-        if (led_effects) {
+        if (HasSequenceItems(led_effects)) {
           for (YAML::Node n_led_effect : led_effects) {
             index = 0;
             m_pRS485Comm->SendConfigEvent(
