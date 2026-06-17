@@ -23,6 +23,7 @@
 #include "yaml-cpp/yaml.h"
 
 #include <set>
+#include <unordered_map>
 
 class RS485Comm;
 
@@ -71,15 +72,17 @@ class PPUCAPI PPUC {
   std::vector<PPUCCoil> GetCoils();
   std::vector<PPUCLamp> GetLamps();
   std::vector<PPUCSwitch> GetSwitches();
+  std::unordered_map<std::string, std::vector<uint16_t>> GetSwitchGroups();
 
  private:
   YAML::Node m_ppucConfig;
   RS485Comm* m_pRS485Comm;
-  uint8_t ResolveLedType(std::string type);
+  uint8_t ResolveLedType(const std::string& type);
   uint32_t ResolveSwitchDebounceMode(const YAML::Node& node);
   std::vector<PPUCCoil> m_coils;
   std::vector<PPUCLamp> m_lamps;
   std::vector<PPUCSwitch> m_switches;
+  std::unordered_map<std::string, std::vector<uint16_t>> m_switchGroups;
 
   bool m_debug = false;
   char* m_rom;

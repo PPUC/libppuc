@@ -40,6 +40,45 @@ const char* LedConfigBlockName(uint32_t type) {
   }
 }
 
+uint8_t ResolveLedTypeValue(const std::string& type) {
+  if (type == "RGB") return NEO_RGB;
+  if (type == "RBG") return NEO_RBG;
+  if (type == "GRB") return NEO_GRB;
+  if (type == "GBR") return NEO_GBR;
+  if (type == "BRG") return NEO_BRG;
+  if (type == "BGR") return NEO_BGR;
+
+  if (type == "WRGB") return NEO_WRGB;
+  if (type == "WRBG") return NEO_WRBG;
+  if (type == "WGRB") return NEO_WGRB;
+  if (type == "WGBR") return NEO_WGBR;
+  if (type == "WBRG") return NEO_WBRG;
+  if (type == "WBGR") return NEO_WBGR;
+
+  if (type == "RWGB") return NEO_RWGB;
+  if (type == "RWBG") return NEO_RWBG;
+  if (type == "RGWB") return NEO_RGWB;
+  if (type == "RGBW") return NEO_RGBW;
+  if (type == "RBWG") return NEO_RBWG;
+  if (type == "RBGW") return NEO_RBGW;
+
+  if (type == "GWRB") return NEO_GWRB;
+  if (type == "GWBR") return NEO_GWBR;
+  if (type == "GRWB") return NEO_GRWB;
+  if (type == "GRBW") return NEO_GRBW;
+  if (type == "GBWR") return NEO_GBWR;
+  if (type == "GBRW") return NEO_GBRW;
+
+  if (type == "BWRG") return NEO_BWRG;
+  if (type == "BWGR") return NEO_BWGR;
+  if (type == "BRWG") return NEO_BRWG;
+  if (type == "BRGW") return NEO_BRGW;
+  if (type == "BGWR") return NEO_BGWR;
+  if (type == "BGRW") return NEO_BGRW;
+
+  return 0;
+}
+
 std::string OptionalStringField(const YAML::Node& node, const char* field) {
   try {
     if (node && node[field]) {
@@ -298,6 +337,48 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                               item, itemPath, "button");
                         });
 
+  const YAML::Node switchGroups = config["switchGroups"];
+  if (switchGroups) {
+    if (!switchGroups.IsMap()) {
+      throw std::runtime_error("invalid YAML configuration: 'switchGroups' "
+                               "must be a map at " +
+                               FormatYamlLocation(switchGroups.Mark()));
+    }
+
+    for (YAML::const_iterator it = switchGroups.begin();
+         it != switchGroups.end(); ++it) {
+      const std::string name = it->first.as<std::string>();
+      if (name.empty()) {
+        throw std::runtime_error(
+            "invalid YAML configuration: switchGroups contains an empty group "
+            "name at " +
+            FormatYamlLocation(it->first.Mark()));
+      }
+      if (name == "buttons") {
+        throw std::runtime_error(
+            "invalid YAML configuration: switchGroups.buttons is reserved for "
+            "switches with button: true");
+      }
+
+      const YAML::Node group = it->second;
+      const std::string groupPath = "switchGroups." + name;
+      ValidateRequiredMap(group, groupPath);
+      ValidateRequiredSequence(group["switches"], groupPath + ".switches");
+      size_t switchIndex = 0;
+      for (YAML::Node switchNumber : group["switches"]) {
+        try {
+          switchNumber.as<uint16_t>();
+        } catch (const YAML::Exception& e) {
+          throw std::runtime_error(
+              "invalid YAML configuration: " + groupPath + ".switches[" +
+              std::to_string(switchIndex) + "] at " +
+              FormatYamlLocation(switchNumber.Mark()) + ": " + e.what());
+        }
+        ++switchIndex;
+      }
+    }
+  }
+
   ValidateOptionalItems(config, "pwmOutput", "root",
                         [](const YAML::Node& item,
                            const std::string& itemPath) {
@@ -359,6 +440,15 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                               item, itemPath, "port");
                           ValidateRequiredField<std::string>(
                               item, itemPath, "ledType");
+                          const std::string ledType =
+                              item["ledType"].as<std::string>();
+                          if (ResolveLedTypeValue(ledType) == 0) {
+                            throw std::runtime_error(
+                                "invalid YAML configuration: " + itemPath +
+                                ".ledType has unsupported value '" + ledType +
+                                "' at " +
+                                FormatYamlLocation(item["ledType"].Mark()));
+                          }
                           ValidateRequiredField<uint32_t>(
                               item, itemPath, "brightness");
                           ValidateRequiredField<uint32_t>(
@@ -413,6 +503,49 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                         });
 }
 
+std::unordered_map<std::string, std::vector<uint16_t>> ParseSwitchGroups(
+    const YAML::Node& config) {
+  std::unordered_map<std::string, std::vector<uint16_t>> groups;
+
+  auto addButtonSwitches = [&groups](const YAML::Node& switches) {
+    if (!switches) {
+      return;
+    }
+    for (YAML::Node n_switch : switches) {
+      if (n_switch["button"] && n_switch["button"].as<bool>()) {
+        groups["buttons"].push_back(n_switch["number"].as<uint16_t>());
+      }
+    }
+  };
+
+  const YAML::Node switchMatrix = config["switchMatrix"];
+  if (switchMatrix) {
+    addButtonSwitches(switchMatrix["switches"]);
+  }
+  addButtonSwitches(config["switches"]);
+
+  const YAML::Node switchGroups = config["switchGroups"];
+  if (switchGroups) {
+    for (YAML::const_iterator it = switchGroups.begin();
+         it != switchGroups.end(); ++it) {
+      const std::string name = it->first.as<std::string>();
+      std::vector<uint16_t> numbers;
+      for (YAML::Node switchNumber : it->second["switches"]) {
+        numbers.push_back(switchNumber.as<uint16_t>());
+      }
+      groups[name] = std::move(numbers);
+    }
+  }
+
+  for (auto& entry : groups) {
+    auto& numbers = entry.second;
+    std::sort(numbers.begin(), numbers.end());
+    numbers.erase(std::unique(numbers.begin(), numbers.end()), numbers.end());
+  }
+
+  return groups;
+}
+
 }  // namespace
 
 PPUC::PPUC() {
@@ -434,43 +567,8 @@ void PPUC::SetLogMessageCallback(PPUC_LogMessageCallback callback,
 
 void PPUC::Disconnect() { m_pRS485Comm->Disconnect(); }
 
-uint8_t PPUC::ResolveLedType(std::string type) {
-  if (type.compare("RGB")) return NEO_RGB;
-  if (type.compare("RBG")) return NEO_RBG;
-  if (type.compare("GRB")) return NEO_GRB;
-  if (type.compare("GBR")) return NEO_GBR;
-  if (type.compare("BRG")) return NEO_BRG;
-  if (type.compare("BGR")) return NEO_BGR;
-
-  if (type.compare("WRGB")) return NEO_WRGB;
-  if (type.compare("WRBG")) return NEO_WRBG;
-  if (type.compare("WGRB")) return NEO_WGRB;
-  if (type.compare("WGBR")) return NEO_WGBR;
-  if (type.compare("WBRG")) return NEO_WBRG;
-  if (type.compare("WBGR")) return NEO_WBGR;
-
-  if (type.compare("RWGB")) return NEO_RWGB;
-  if (type.compare("RWBG")) return NEO_RWBG;
-  if (type.compare("RGWB")) return NEO_RGWB;
-  if (type.compare("RGBW")) return NEO_RGBW;
-  if (type.compare("RBWG")) return NEO_RBWG;
-  if (type.compare("RBGW")) return NEO_RBGW;
-
-  if (type.compare("GWRB")) return NEO_GWRB;
-  if (type.compare("GWBR")) return NEO_GWBR;
-  if (type.compare("GRWB")) return NEO_GRWB;
-  if (type.compare("GRBW")) return NEO_GRBW;
-  if (type.compare("GBWR")) return NEO_GBWR;
-  if (type.compare("GBRW")) return NEO_GBRW;
-
-  if (type.compare("BWRG")) return NEO_BWRG;
-  if (type.compare("BWGR")) return NEO_BWGR;
-  if (type.compare("BRWG")) return NEO_BRWG;
-  if (type.compare("BRGW")) return NEO_BRGW;
-  if (type.compare("BGWR")) return NEO_BGWR;
-  if (type.compare("BGRW")) return NEO_BGRW;
-
-  return 0;
+uint8_t PPUC::ResolveLedType(const std::string& type) {
+  return ResolveLedTypeValue(type);
 }
 
 void PPUC::LoadConfiguration(const char* configFile) {
@@ -478,6 +576,7 @@ void PPUC::LoadConfiguration(const char* configFile) {
   try {
     m_ppucConfig = YAML::LoadFile(configFile);
     ValidatePpucConfiguration(m_ppucConfig);
+    m_switchGroups = ParseSwitchGroups(m_ppucConfig);
   } catch (const YAML::Exception& e) {
     throw std::runtime_error(
         "invalid YAML configuration in '" + std::string(configFile) + "' at " +
@@ -1571,4 +1670,8 @@ std::vector<PPUCSwitch> PPUC::GetSwitches() {
             });
 
   return m_switches;
+}
+
+std::unordered_map<std::string, std::vector<uint16_t>> PPUC::GetSwitchGroups() {
+  return m_switchGroups;
 }
