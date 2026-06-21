@@ -359,6 +359,32 @@ void ValidateNamedEffectTriggerFields(const YAML::Node& effect,
                                       const std::string& effectPath) {
   ValidateOptionalField<std::string>(effect, effectPath, "name");
   ValidateOptionalField<uint32_t>(effect, effectPath, "value");
+
+  const YAML::Node simpleTrigger = effect["simpleTrigger"];
+  if (simpleTrigger) {
+    ValidateRequiredMap(simpleTrigger, effectPath + ".simpleTrigger");
+    ValidateRequiredField<std::string>(simpleTrigger,
+                                       effectPath + ".simpleTrigger",
+                                       "source");
+    ValidateRequiredField<uint32_t>(simpleTrigger,
+                                    effectPath + ".simpleTrigger", "number");
+    ValidateRequiredField<uint32_t>(simpleTrigger,
+                                    effectPath + ".simpleTrigger", "value");
+    const std::string source = simpleTrigger["source"].as<std::string>();
+    if (source != "switch" && source != "lamp" && source != "light") {
+      throw std::runtime_error(
+          "invalid YAML configuration: " + effectPath +
+          ".simpleTrigger.source must be 'switch' or 'lamp', got '" + source +
+          "' at " + FormatYamlLocation(simpleTrigger["source"].Mark()));
+    }
+    const uint32_t value = simpleTrigger["value"].as<uint32_t>();
+    if (value > 1) {
+      throw std::runtime_error(
+          "invalid YAML configuration: " + effectPath +
+          ".simpleTrigger.value must be 0 or 1 at " +
+          FormatYamlLocation(simpleTrigger["value"].Mark()));
+    }
+  }
 }
 
 void ValidatePpucConfiguration(const YAML::Node& config) {
@@ -915,6 +941,53 @@ void SendNamedEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
                                         value));
 }
 
+uint32_t ResolveSimpleTriggerSource(const std::string& source) {
+  if (source == "switch") {
+    return EVENT_SOURCE_SWITCH;
+  }
+  if (source == "lamp" || source == "light") {
+    return EVENT_SOURCE_LIGHT;
+  }
+  throw std::runtime_error("unsupported simple trigger source '" + source +
+                           "'");
+}
+
+void SendSimpleEffectTriggerConfig(RS485Comm* comm, const YAML::Node& effectNode,
+                                   uint32_t type, uint8_t board,
+                                   uint32_t port,
+                                   const std::string& context) {
+  if (!comm || !effectNode || !effectNode["simpleTrigger"]) {
+    return;
+  }
+
+  const YAML::Node trigger = effectNode["simpleTrigger"];
+  const uint32_t source =
+      ResolveSimpleTriggerSource(trigger["source"].as<std::string>());
+  const uint32_t number = trigger["number"].as<uint32_t>();
+  const uint32_t value = trigger["value"].as<uint32_t>();
+  if (value > 1) {
+    throw std::runtime_error("invalid YAML configuration: " + context +
+                             ".simpleTrigger.value must be 0 or 1");
+  }
+
+  uint8_t index = 0;
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_PORT,
+                                        port));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_TYPE,
+                                        type));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_SOURCE,
+                                        source));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_NUMBER,
+                                        number));
+  comm->SendConfigEvent(new ConfigEvent(board, (uint8_t)CONFIG_TOPIC_TRIGGER,
+                                        index++, (uint8_t)CONFIG_TOPIC_VALUE,
+                                        value));
+}
+
 void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
                               uint8_t board, uint32_t port) {
   if (HasSequenceItems(items)) {
@@ -1345,6 +1418,11 @@ bool PPUC::Connect() {
                 m_pRS485Comm, n_pwm_effect, CONFIG_TOPIC_PWM_EFFECT,
                 n_pwmOutput["board"].as<uint8_t>(),
                 n_pwmOutput["port"].as<uint32_t>());
+            SendSimpleEffectTriggerConfig(
+                m_pRS485Comm, n_pwm_effect, CONFIG_TOPIC_PWM_EFFECT,
+                n_pwmOutput["board"].as<uint8_t>(),
+                n_pwmOutput["port"].as<uint32_t>(),
+                ConfigItemContext(n_pwm_effect, "pwmOutput.effects"));
 
             if (AbortConfigurationEarly()) {
               return false;
@@ -1515,6 +1593,11 @@ bool PPUC::Connect() {
                 m_pRS485Comm, n_led_effect, CONFIG_TOPIC_LED_EFFECT,
                 n_ledStripe["board"].as<uint8_t>(),
                 n_ledStripe["port"].as<uint32_t>());
+            SendSimpleEffectTriggerConfig(
+                m_pRS485Comm, n_led_effect, CONFIG_TOPIC_LED_EFFECT,
+                n_ledStripe["board"].as<uint8_t>(),
+                n_ledStripe["port"].as<uint32_t>(),
+                ConfigItemContext(n_led_effect, "ledStripes.effects"));
 
             if (AbortConfigurationEarly()) {
               return false;
