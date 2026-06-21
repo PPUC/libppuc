@@ -1,6 +1,7 @@
 #include "PPUC.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <set>
@@ -146,8 +147,11 @@ T ReadRequiredYamlField(const YAML::Node& item, const char* field,
 
 uint32_t ParseRequiredHexColorField(const YAML::Node& item, const char* field,
                                     const std::string& context) {
-  const std::string value =
+  std::string value =
       ReadRequiredYamlField<std::string>(item, field, context);
+  if (!value.empty() && value[0] == '#') {
+    value.erase(0, 1);
+  }
 
   uint32_t color = 0;
   std::stringstream ss;
@@ -160,6 +164,76 @@ uint32_t ParseRequiredHexColorField(const YAML::Node& item, const char* field,
                              "'");
   }
   return color;
+}
+
+uint32_t ParseHexColorValue(const YAML::Node& value,
+                            const std::string& context) {
+  std::string text = value.as<std::string>();
+  if (!text.empty() && text[0] == '#') {
+    text.erase(0, 1);
+  }
+
+  uint32_t color = 0;
+  std::stringstream ss;
+  ss << std::hex << text;
+  ss >> color;
+  if (ss.fail() || !ss.eof()) {
+    throw std::runtime_error("invalid YAML configuration: " + context +
+                             " expected hexadecimal color, got '" + text +
+                             "'");
+  }
+  return color;
+}
+
+void ValidateLedEffectColorFields(const YAML::Node& effect,
+                                  const std::string& effectPath) {
+  const std::string context = ConfigItemContext(effect, effectPath);
+  const YAML::Node colors = effect["colors"];
+  if (!colors || !colors.IsSequence() || colors.size() == 0 ||
+      colors.size() > 3) {
+    throw std::runtime_error("invalid YAML configuration: " + context +
+                             " field 'colors' must contain 1 to 3 "
+                             "hexadecimal colors");
+  }
+
+  for (std::size_t i = 0; i < colors.size(); ++i) {
+    ParseHexColorValue(colors[i],
+                       context + " field 'colors[" + std::to_string(i) +
+                           "]'");
+  }
+}
+
+std::array<uint32_t, 3> BuildLedEffectColors(const YAML::Node& effect,
+                                             const std::string& context) {
+  std::array<uint32_t, 3> colors = {0, 0, 0};
+  const YAML::Node colorNodes = effect["colors"];
+  for (std::size_t i = 0; i < colorNodes.size() && i < colors.size(); ++i) {
+    colors[i] = ParseHexColorValue(
+        colorNodes[i], context + " field 'colors[" + std::to_string(i) +
+                           "]'");
+  }
+
+  return colors;
+}
+
+uint32_t BuildWs2812FxOptions(const YAML::Node& effect) {
+  uint32_t options = 0;
+  if (effect["reverse"] && effect["reverse"].as<uint32_t>() != 0) {
+    options |= 0x80u;
+  }
+  if (effect["gamma"] && effect["gamma"].as<bool>()) {
+    options |= 0x08u;
+  }
+  if (effect["fadeRate"]) {
+    options |= (effect["fadeRate"].as<uint32_t>() & 0x07u) << 4;
+  }
+  if (effect["size"]) {
+    options |= (effect["size"].as<uint32_t>() & 0x03u) << 1;
+  }
+  if (effect["options"]) {
+    options |= effect["options"].as<uint32_t>() & 0xFFu;
+  }
+  return options;
 }
 
 template <typename T>
@@ -483,15 +557,22 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                                  const std::string& effectPath) {
                                 ValidateRequiredField<uint32_t>(
                                     effect, effectPath, "segment");
-                                ParseRequiredHexColorField(
-                                    effect, "color",
-                                    ConfigItemContext(effect, effectPath));
+                                ValidateLedEffectColorFields(effect,
+                                                             effectPath);
                                 ValidateRequiredField<uint32_t>(
                                     effect, effectPath, "duration");
                                 ValidateEffectModeField(
                                     effect, effectPath, "effect");
                                 ValidateRequiredField<uint32_t>(
                                     effect, effectPath, "reverse");
+                                ValidateOptionalField<uint32_t>(
+                                    effect, effectPath, "fadeRate");
+                                ValidateOptionalField<bool>(
+                                    effect, effectPath, "gamma");
+                                ValidateOptionalField<uint32_t>(
+                                    effect, effectPath, "size");
+                                ValidateOptionalField<uint32_t>(
+                                    effect, effectPath, "options");
                                 ValidateRequiredField<uint32_t>(
                                     effect, effectPath, "speed");
                                 ValidateRequiredField<uint32_t>(
@@ -1368,14 +1449,22 @@ bool PPUC::Connect() {
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
                                 (uint8_t)CONFIG_TOPIC_LED_SEGMENT,
                                 n_led_effect["segment"].as<uint32_t>()));
-            uint32_t color;
-            std::stringstream ss;
-            ss << std::hex << n_led_effect["color"].as<std::string>();
-            ss >> color;
+            const std::string effectContext =
+                ConfigItemContext(n_led_effect, "ledStripes.effects");
+            const std::array<uint32_t, 3> colors =
+                BuildLedEffectColors(n_led_effect, effectContext);
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
-                                (uint8_t)CONFIG_TOPIC_COLOR, color));
+                                (uint8_t)CONFIG_TOPIC_COLOR, colors[0]));
+            m_pRS485Comm->SendConfigEvent(
+                new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
+                                (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
+                                (uint8_t)CONFIG_TOPIC_COLOR_2, colors[1]));
+            m_pRS485Comm->SendConfigEvent(
+                new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
+                                (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
+                                (uint8_t)CONFIG_TOPIC_COLOR_3, colors[2]));
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
@@ -1406,6 +1495,11 @@ bool PPUC::Connect() {
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
                                 (uint8_t)CONFIG_TOPIC_PRIORITY,
                                 n_led_effect["priority"].as<uint32_t>()));
+            m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+                n_ledStripe["board"].as<uint8_t>(),
+                (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
+                (uint8_t)CONFIG_TOPIC_OPTIONS,
+                BuildWs2812FxOptions(n_led_effect)));
             m_pRS485Comm->SendConfigEvent(
                 new ConfigEvent(n_ledStripe["board"].as<uint8_t>(),
                                 (uint8_t)CONFIG_TOPIC_LED_EFFECT, index++,
