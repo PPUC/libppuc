@@ -486,6 +486,19 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
     }
   }
 
+  ValidateOptionalItems(config, "coilGiMappings", "root",
+                        [](const YAML::Node& item,
+                           const std::string& itemPath) {
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "coil");
+                          ValidateRequiredField<uint32_t>(
+                              item, itemPath, "gi");
+                          ValidateOptionalField<uint32_t>(
+                              item, itemPath, "onBrightness");
+                          ValidateOptionalField<uint32_t>(
+                              item, itemPath, "offBrightness");
+                        });
+
   ValidateOptionalItems(config, "pwmOutput", "root",
                         [](const YAML::Node& item,
                            const std::string& itemPath) {
@@ -660,6 +673,27 @@ std::unordered_map<std::string, std::vector<uint16_t>> ParseSwitchGroups(
   return groups;
 }
 
+std::vector<PPUCCoilGiMapping> ParseCoilGiMappings(const YAML::Node& config) {
+  std::vector<PPUCCoilGiMapping> mappings;
+  const YAML::Node coilGiMappings = config["coilGiMappings"];
+  if (!HasSequenceItems(coilGiMappings)) {
+    return mappings;
+  }
+
+  for (YAML::Node item : coilGiMappings) {
+    PPUCCoilGiMapping mapping;
+    mapping.coil = item["coil"].as<uint16_t>();
+    mapping.gi = item["gi"].as<uint8_t>();
+    mapping.onBrightness =
+        item["onBrightness"] ? item["onBrightness"].as<uint8_t>() : 8;
+    mapping.offBrightness =
+        item["offBrightness"] ? item["offBrightness"].as<uint8_t>() : 0;
+    mappings.push_back(mapping);
+  }
+
+  return mappings;
+}
+
 }  // namespace
 
 PPUC::PPUC() {
@@ -691,6 +725,7 @@ void PPUC::LoadConfiguration(const char* configFile) {
     m_ppucConfig = YAML::LoadFile(configFile);
     ValidatePpucConfiguration(m_ppucConfig);
     m_switchGroups = ParseSwitchGroups(m_ppucConfig);
+    m_coilGiMappings = ParseCoilGiMappings(m_ppucConfig);
   } catch (const YAML::Exception& e) {
     throw std::runtime_error(
         "invalid YAML configuration in '" + std::string(configFile) + "' at " +
@@ -1858,4 +1893,8 @@ std::vector<PPUCSwitch> PPUC::GetSwitches() {
 
 std::unordered_map<std::string, std::vector<uint16_t>> PPUC::GetSwitchGroups() {
   return m_switchGroups;
+}
+
+const std::vector<PPUCCoilGiMapping>& PPUC::GetCoilGiMappings() const {
+  return m_coilGiMappings;
 }

@@ -27,6 +27,13 @@
 
 class RS485Comm;
 
+struct PPUCCoilGiMapping {
+  uint16_t coil = 0;
+  uint8_t gi = 0;
+  uint8_t onBrightness = 8;
+  uint8_t offBrightness = 0;
+};
+
 class PPUCAPI PPUC {
  public:
   PPUC();
@@ -73,6 +80,7 @@ class PPUCAPI PPUC {
   std::vector<PPUCLamp> GetLamps();
   std::vector<PPUCSwitch> GetSwitches();
   std::unordered_map<std::string, std::vector<uint16_t>> GetSwitchGroups();
+  const std::vector<PPUCCoilGiMapping>& GetCoilGiMappings() const;
 
  private:
   YAML::Node m_ppucConfig;
@@ -82,6 +90,7 @@ class PPUCAPI PPUC {
   std::vector<PPUCCoil> m_coils;
   std::vector<PPUCLamp> m_lamps;
   std::vector<PPUCSwitch> m_switches;
+  std::vector<PPUCCoilGiMapping> m_coilGiMappings;
   std::unordered_map<std::string, std::vector<uint16_t>> m_switchGroups;
 
   bool m_debug = false;
