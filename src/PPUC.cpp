@@ -411,7 +411,7 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
     ValidateRequiredMap(switchMatrix, "switchMatrix");
     ValidateRequiredField<uint8_t>(switchMatrix, "switchMatrix", "board");
     ValidateRequiredField<bool>(switchMatrix, "switchMatrix", "activeLow");
-    ValidateRequiredField<uint8_t>(switchMatrix, "switchMatrix", "numRows");
+    ValidateRequiredField<uint8_t>(switchMatrix, "switchMatrix", "rows");
     ValidateOptionalItems(
         switchMatrix, "switches", "switchMatrix",
         [](const YAML::Node& item, const std::string& itemPath) {
@@ -1256,7 +1256,7 @@ bool PPUC::Connect() {
           new ConfigEvent(switchMatrix["board"].as<uint8_t>(),
                           (uint8_t)CONFIG_TOPIC_SWITCH_MATRIX, index++,
                           (uint8_t)CONFIG_TOPIC_NUM_ROWS,
-                          switchMatrix["numRows"].as<uint8_t>()));
+                          switchMatrix["rows"].as<uint8_t>()));
 
       const YAML::Node& switches = switchMatrix["switches"];
       if (HasSequenceItems(switches)) {
