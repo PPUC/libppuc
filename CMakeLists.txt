@@ -176,6 +176,7 @@ if(BUILD_TESTS)
       tests/test_config_validation.cpp
       tests/test_switch_groups.cpp
       tests/test_coil_gi_mappings.cpp
+      tests/test_pwm_output.cpp
    )
 
    target_include_directories(ppuc_tests PRIVATE ${PPUC_INCLUDE_DIRS} tests)
