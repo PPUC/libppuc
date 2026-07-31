@@ -177,9 +177,12 @@ if(BUILD_TESTS)
       tests/test_switch_groups.cpp
       tests/test_coil_gi_mappings.cpp
       tests/test_pwm_output.cpp
+      tests/test_protocol_conformance.cpp
+      third-party/include/io-boards/ProtocolConformance.cpp
    )
 
-   target_include_directories(ppuc_tests PRIVATE ${PPUC_INCLUDE_DIRS} tests)
+   target_include_directories(ppuc_tests PRIVATE ${PPUC_INCLUDE_DIRS} tests
+      third-party/include/io-boards)
 
    if(PLATFORM STREQUAL "win")
       target_link_directories(ppuc_tests PRIVATE

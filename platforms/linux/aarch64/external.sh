@@ -23,10 +23,15 @@ cd external
 #
 
 prepare_dependency_source io-boards "${IO_BOARDS_SHA}" "https://github.com/PPUC/io-boards/archive/${IO_BOARDS_SHA}.zip" zip IO_BOARDS_SOURCE_DIR
-cp io-boards/src/PPUCTimings.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
-cp io-boards/src/PPUCPlatforms.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
-cp io-boards/src/PPUCProtocolV2.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
-cp io-boards/src/EventDispatcher/Event.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+cp -a io-boards/src/PPUCTimings.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+cp -a io-boards/src/PPUCPlatforms.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+cp -a io-boards/src/PPUCProtocolV2.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+cp -a io-boards/src/EventDispatcher/Event.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+
+# The protocol conformance suite travels with the header it tests, so both
+# sides of the bus assert the same wire contract from identical code.
+cp -a io-boards/test/conformance/ProtocolConformance.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+cp -a io-boards/test/conformance/ProtocolConformance.cpp ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
 
 #
 # build libserialport and copy to platform/arch
@@ -35,12 +40,12 @@ cp io-boards/src/EventDispatcher/Event.h ${PROJECT_SOURCE_ROOT}/third-party/incl
 curl -sL https://github.com/sigrokproject/libserialport/archive/${LIBSERIALPORT_SHA}.zip -o libserialport.zip
 unzip libserialport.zip
 cd libserialport-$LIBSERIALPORT_SHA
-cp libserialport.h ${PROJECT_SOURCE_ROOT}/third-party/include
+cp -a libserialport.h ${PROJECT_SOURCE_ROOT}/third-party/include
 ./autogen.sh
 ./configure
 make -j${NUM_PROCS}
-cp .libs/libserialport.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/linux/aarch64/
-cp .libs/libserialport.so.0 ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
+cp -a .libs/libserialport.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/linux/aarch64/
+cp -a .libs/libserialport.so.0 ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
 cd ..
 
 #
@@ -51,7 +56,7 @@ curl -sL https://github.com/jbeder/yaml-cpp/archive/${YAML_CPP_SHA}.zip -o yaml-
 unzip yaml-cpp.zip
 
 cd yaml-cpp-${YAML_CPP_SHA}
-cp -r include/yaml-cpp ${PROJECT_SOURCE_ROOT}/third-party/include/
+cp -a include/yaml-cpp ${PROJECT_SOURCE_ROOT}/third-party/include/
 cmake -DYAML_BUILD_SHARED_LIBS=ON \
   -DYAML_CPP_BUILD_CONTRIB=OFF \
   -DYAML_CPP_BUILD_TOOLS=OFF \
