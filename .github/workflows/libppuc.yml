@@ -26,6 +26,27 @@ jobs:
           echo "${TAG}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and run unit tests
+        run: |
+          BUILD_TYPE=Release ./platforms/linux/x64/external.sh
+          # The test target compiles the library sources directly, so neither
+          # the shared nor the static library is needed here.
+          cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLATFORM=linux \
+            -DARCH=x64 \
+            -DBUILD_SHARED=OFF \
+            -DBUILD_STATIC=OFF \
+            -DBUILD_TESTS=ON \
+            -B build-tests
+          cmake --build build-tests -- -j$(nproc)
+          ctest --test-dir build-tests --output-on-failure
+
   build:
     name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
