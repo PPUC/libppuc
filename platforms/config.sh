@@ -5,6 +5,7 @@ set -e
 IO_BOARDS_SHA=da2c44275bc074d435845687ef6c4b3c82e639f0
 LIBSERIALPORT_SHA=21b3dfe5f68c205be4086469335fd2fc2ce11ed2
 YAML_CPP_SHA=28f93bdec6387d42332220afa9558060c8016795
+DOCTEST_VERSION=2.4.11
 
 
 PROJECT_SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -57,6 +58,33 @@ prepare_dependency_source() {
    fi
 }
 
+
+
+ppuc_stage_doctest() {
+   # doctest is a single header used only by the unit tests. It is staged like
+   # every other dependency instead of being committed, because
+   # third-party/include is generated and gitignored.
+   #
+   # Cached against the pinned version so repeated builds do not re-fetch it.
+   local include_dir="${PROJECT_SOURCE_ROOT}/third-party/include"
+   local header="${include_dir}/doctest.h"
+   local marker="${include_dir}/doctest.cache.txt"
+   local expected="${DOCTEST_VERSION}"
+   local found
+
+   found="$([ -f "${marker}" ] && cat "${marker}" || echo "")"
+
+   if [ "${expected}" = "${found}" ] && [ -f "${header}" ]; then
+      return 0
+   fi
+
+   echo "Staging doctest. Expected: ${expected}, Found: ${found}"
+   mkdir -p "${include_dir}"
+   curl -sL \
+      "https://raw.githubusercontent.com/doctest/doctest/v${DOCTEST_VERSION}/doctest/doctest.h" \
+      -o "${header}"
+   echo "${expected}" > "${marker}"
+}
 
 
 if [ -z "${BUILD_TYPE}" ]; then

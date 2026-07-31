@@ -60,3 +60,9 @@ cmake --build build --config Release
 cp build/Release/yaml-cpp.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x64/
 cp build/Release/yaml-cpp*.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x64/
 cd ..
+
+#
+# doctest (unit test framework, header only)
+#
+
+ppuc_stage_doctest

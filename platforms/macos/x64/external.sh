@@ -62,3 +62,9 @@ cmake -DCMAKE_OSX_ARCHITECTURES=x86_64 \
 cmake --build build --config Release
 cp -P build/libyaml-cpp*.dylib ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/macos/x64/
 cd ..
+
+#
+# doctest (unit test framework, header only)
+#
+
+ppuc_stage_doctest

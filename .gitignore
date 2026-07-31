@@ -8,3 +8,4 @@ external
 third-party/runtime-libs/
 third-party/build-libs/
 third-party/include/
+/build-tests/

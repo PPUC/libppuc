@@ -61,3 +61,9 @@ cmake -DYAML_BUILD_SHARED_LIBS=ON \
 cmake --build build --config Release
 cp -P build/libyaml-cpp.so.* ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
 cd ..
+
+#
+# doctest (unit test framework, header only)
+#
+
+ppuc_stage_doctest

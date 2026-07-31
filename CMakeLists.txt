@@ -6,6 +6,7 @@ set(ARCH "x64" CACHE STRING "Arch")
 option(BUILD_SHARED "Option to build shared library" ON)
 option(BUILD_STATIC "Option to build static library" ON)
 option(ENABLE_SANITIZERS "Enable address/undefined sanitizers for supported Debug builds" OFF)
+option(BUILD_TESTS "Option to build unit tests" OFF)
 
 message(STATUS "PLATFORM: ${PLATFORM}")
 message(STATUS "ARCH: ${ARCH}")
@@ -13,6 +14,7 @@ message(STATUS "ARCH: ${ARCH}")
 message(STATUS "BUILD_SHARED: ${BUILD_SHARED}")
 message(STATUS "BUILD_STATIC: ${BUILD_STATIC}")
 message(STATUS "ENABLE_SANITIZERS: ${ENABLE_SANITIZERS}")
+message(STATUS "BUILD_TESTS: ${BUILD_TESTS}")
 
 file(READ src/PPUC.h version)
 string(REGEX MATCH "#[ \t]*define[ \t]+PPUC_VERSION_MAJOR[ \t]+([0-9]+)" _tmp "${version}")
@@ -159,4 +161,69 @@ if(BUILD_STATIC)
       LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
    )
    install(FILES src/PPUC.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
+endif()
+
+if(BUILD_TESTS)
+   enable_testing()
+
+   # The unit tests compile the library sources directly rather than linking
+   # ppuc_static, so they do not depend on BUILD_STATIC and can later reach
+   # internal helpers if needed.
+   add_executable(ppuc_tests
+      ${PPUC_SOURCES}
+      tests/main.cpp
+      tests/ConfigFixture.h
+      tests/test_config_validation.cpp
+      tests/test_switch_groups.cpp
+      tests/test_coil_gi_mappings.cpp
+   )
+
+   target_include_directories(ppuc_tests PRIVATE ${PPUC_INCLUDE_DIRS} tests)
+
+   if(PLATFORM STREQUAL "win")
+      target_link_directories(ppuc_tests PRIVATE
+         third-party/build-libs/${PLATFORM}/${ARCH}
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      if(ARCH STREQUAL "x64")
+         target_link_libraries(ppuc_tests PRIVATE libserialport64 yaml-cpp)
+      else()
+         target_link_libraries(ppuc_tests PRIVATE libserialport yaml-cpp)
+      endif()
+   elseif(PLATFORM STREQUAL "win-mingw")
+      target_link_directories(ppuc_tests PRIVATE
+         third-party/build-libs/${PLATFORM}/${ARCH}
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      target_link_libraries(ppuc_tests PRIVATE serialport64 yaml-cpp)
+   elseif(PLATFORM STREQUAL "macos")
+      target_link_directories(ppuc_tests PRIVATE
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      target_link_libraries(ppuc_tests PRIVATE serialport yaml-cpp)
+   elseif(PLATFORM STREQUAL "linux")
+      target_link_directories(ppuc_tests PRIVATE
+         third-party/runtime-libs/${PLATFORM}/${ARCH}
+      )
+      target_link_libraries(ppuc_tests PRIVATE -l:libserialport.so.0 -l:libyaml-cpp.so.0.8.0)
+   endif()
+
+   # The library targets are linked with an @executable_path / $ORIGIN rpath so
+   # they can be shipped next to a host application. The test binary is never
+   # installed and runs from the build tree, so point it straight at the staged
+   # runtime libraries instead.
+   if(PLATFORM STREQUAL "macos" OR PLATFORM STREQUAL "linux")
+      set_target_properties(ppuc_tests PROPERTIES
+         INSTALL_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}"
+      )
+   elseif(PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw")
+      # Windows has no rpath; copy the runtime DLLs next to the test binary.
+      add_custom_command(TARGET ppuc_tests POST_BUILD
+         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}/${ARCH}"
+            "$<TARGET_FILE_DIR:ppuc_tests>"
+      )
+   endif()
+
+   add_test(NAME ppuc_tests COMMAND ppuc_tests)
 endif()
