@@ -985,24 +985,9 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
   uint8_t buffer[ppuc::v2::kConfigFrameBytes];
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameConfig,
-                                            ppuc::v2::kFlagKeyframe);
-  buffer[2] = ppuc::v2::kNoBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
-  buffer[5] = event->boardId;
-  buffer[6] = event->topic;
-  buffer[7] = event->index;
-  buffer[8] = event->key;
-  buffer[9] = static_cast<uint8_t>((event->value >> 24) & 0xff);
-  buffer[10] = static_cast<uint8_t>((event->value >> 16) & 0xff);
-  buffer[11] = static_cast<uint8_t>((event->value >> 8) & 0xff);
-  buffer[12] = static_cast<uint8_t>(event->value & 0xff);
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(
-      buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigPayloadBytes);
-  buffer[13] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[14] = static_cast<uint8_t>(crc & 0xff);
+  ppuc::v2::BuildConfigFrame(buffer, ppuc::v2::kNoBoard, m_sequence++, m_epoch,
+                             event->boardId, event->topic, event->index,
+                             event->key, event->value);
   if (m_skippedBoards.find(buffer[5]) != m_skippedBoards.end()) {
     if (m_debug) {
       DebugPrintf(
@@ -1203,22 +1188,8 @@ bool RS485Comm::SendSetupFrame() {
   }
 
   uint8_t buffer[ppuc::v2::kSetupFrameBytes];
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameSetup,
-                                            ppuc::v2::kFlagKeyframe);
-  buffer[2] = ppuc::v2::kNoBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
-  buffer[5] = static_cast<uint8_t>((m_runtimeConfig.coilBits >> 8) & 0xff);
-  buffer[6] = static_cast<uint8_t>(m_runtimeConfig.coilBits & 0xff);
-  buffer[7] = static_cast<uint8_t>((m_runtimeConfig.lampBits >> 8) & 0xff);
-  buffer[8] = static_cast<uint8_t>(m_runtimeConfig.lampBits & 0xff);
-  buffer[9] = static_cast<uint8_t>((m_runtimeConfig.switchBits >> 8) & 0xff);
-  buffer[10] = static_cast<uint8_t>(m_runtimeConfig.switchBits & 0xff);
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(
-      buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kSetupPayloadBytes);
-  buffer[11] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[12] = static_cast<uint8_t>(crc & 0xff);
+  ppuc::v2::BuildSetupFrame(buffer, ppuc::v2::kNoBoard, m_sequence++, m_epoch,
+                            m_runtimeConfig);
 
   if (WriteBytes("SetupFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
@@ -1309,29 +1280,20 @@ bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
   uint8_t buffer[ppuc::v2::kHeaderBytes + ppuc::v2::kSwitchStatusBytes +
                  ppuc::v2::kMaxSwitchBytes + ppuc::v2::kCrcBytes];
 
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(
-      sendState ? ppuc::v2::kFrameSwitchState : ppuc::v2::kFrameSwitchNoChange,
-      sendState ? ppuc::v2::kFlagKeyframe : ppuc::v2::kFlagNone);
-  buffer[2] = nextBoard;
-  buffer[3] = m_lastOutputSequenceSent;
-  buffer[4] = m_epoch;
-  buffer[5] = m_epoch;
-  buffer[6] = m_lastOutputSequenceSent;
-  buffer[7] = ppuc::v2::kStatusInSync;
-  buffer[8] = 0;
-
+  // Copy the bitmap under the lock, then build outside it. This preserves the
+  // original locking exactly - m_stateMutex is taken only for a state reply and
+  // only for the duration of the copy - which matters on the switch-reply path
+  // where hold time is timing sensitive.
+  uint8_t switchCopy[ppuc::v2::kMaxSwitchBytes];
   if (sendState) {
     std::lock_guard<std::mutex> lock(m_stateMutex);
-    memcpy(&buffer[9], m_switchBitmap, switchBytes);
+    memcpy(switchCopy, m_switchBitmap, switchBytes);
   }
 
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(
-      buffer, ppuc::v2::kHeaderBytes + payloadBytes);
-  buffer[ppuc::v2::kHeaderBytes + payloadBytes] =
-      static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[ppuc::v2::kHeaderBytes + payloadBytes + 1] =
-      static_cast<uint8_t>(crc & 0xff);
+  ppuc::v2::BuildSwitchReplyFrame(
+      buffer, sendState, nextBoard, m_lastOutputSequenceSent, m_epoch, m_epoch,
+      m_lastOutputSequenceSent, ppuc::v2::kStatusInSync, switchCopy,
+      switchBytes);
 
   if (m_debug) {
     DebugPrintf("Sent virtual V2 switch %s frame for board token %u -> %u",
@@ -1382,15 +1344,8 @@ bool RS485Comm::SendResetFrame() {
   }
 
   uint8_t buffer[ppuc::v2::kResetFrameBytes];
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] =
-      ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameReset, ppuc::v2::kFlagNone);
-  buffer[2] = ppuc::v2::kNoBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
-  buffer[5] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[6] = static_cast<uint8_t>(crc & 0xff);
+  ppuc::v2::BuildBareFrame(buffer, ppuc::v2::kFrameReset, ppuc::v2::kFlagNone,
+                           ppuc::v2::kNoBoard, m_sequence++, m_epoch);
 
   if (WriteBytes("ResetFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
@@ -1408,15 +1363,9 @@ bool RS485Comm::SendRestartFrame() {
   }
 
   uint8_t buffer[ppuc::v2::kRestartFrameBytes];
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameRestart,
-                                            ppuc::v2::kFlagNone);
-  buffer[2] = ppuc::v2::kNoBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
-  buffer[5] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[6] = static_cast<uint8_t>(crc & 0xff);
+  ppuc::v2::BuildBareFrame(buffer, ppuc::v2::kFrameRestart,
+                           ppuc::v2::kFlagNone, ppuc::v2::kNoBoard,
+                           m_sequence++, m_epoch);
 
   if (WriteBytes("RestartFrame", buffer, sizeof(buffer))) {
     if (m_debug) {
@@ -1436,16 +1385,10 @@ bool RS485Comm::SendSwitchRefreshFrame(uint8_t nextBoard) {
   }
 
   uint8_t buffer[ppuc::v2::kSwitchRefreshFrameBytes];
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameSwitchRefresh,
-                                            ppuc::v2::kFlagNone);
-  buffer[2] = nextBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
+  ppuc::v2::BuildBareFrame(buffer, ppuc::v2::kFrameSwitchRefresh,
+                           ppuc::v2::kFlagNone, nextBoard, m_sequence++,
+                           m_epoch);
   m_lastOutputSequenceSent = buffer[3];
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes);
-  buffer[5] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[6] = static_cast<uint8_t>(crc & 0xff);
 
   if (m_debug) {
     DebugPrintf("Sent V2 SwitchRefreshFrame seq=%u firstBoard=%u", buffer[3],
@@ -1466,22 +1409,8 @@ bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
   uint8_t buffer[ppuc::v2::kMappingFrameBytes];
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameMapping,
-                                            ppuc::v2::kFlagKeyframe);
-  buffer[2] = ppuc::v2::kNoBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
-  buffer[5] = domain;
-  buffer[6] = 0;
-  buffer[7] = static_cast<uint8_t>((index >> 8) & 0xff);
-  buffer[8] = static_cast<uint8_t>(index & 0xff);
-  buffer[9] = static_cast<uint8_t>((number >> 8) & 0xff);
-  buffer[10] = static_cast<uint8_t>(number & 0xff);
-  const uint16_t crc = ppuc::v2::Crc16Ccitt(
-      buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kMappingPayloadBytes);
-  buffer[11] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[12] = static_cast<uint8_t>(crc & 0xff);
+  ppuc::v2::BuildMappingFrame(buffer, ppuc::v2::kNoBoard, m_sequence++,
+                              m_epoch, domain, index, number);
 
   return WriteBytes("MappingFrame", buffer, sizeof(buffer));
 }
@@ -1546,26 +1475,9 @@ bool RS485Comm::SendOutputStateFrameFromBuffers(uint8_t nextBoard,
                  ppuc::v2::kMaxLampBytes + ppuc::v2::kGiBytes +
                  ppuc::v2::kCrcBytes];
 
-  buffer[0] = ppuc::v2::kSyncByte;
-  buffer[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameOutputState,
-                                            ppuc::v2::kFlagKeyframe);
-  buffer[2] = nextBoard;
-  buffer[3] = m_sequence++;
-  buffer[4] = m_epoch;
+  ppuc::v2::BuildOutputStateFrame(buffer, nextBoard, m_sequence++, m_epoch,
+                                  m_runtimeConfig, coils, lamps, giLevels);
   m_lastOutputSequenceSent = buffer[3];
-
-  memcpy(&buffer[5], coils, coilBytes);
-  memcpy(&buffer[5 + coilBytes], lamps, lampBytes);
-  memset(&buffer[5 + coilBytes + lampBytes], 0, ppuc::v2::kGiBytes);
-  for (uint8_t giString = 0; giString < ppuc::v2::kGiStrings; ++giString) {
-    ppuc::v2::SetPackedNibble(&buffer[5 + coilBytes + lampBytes], giString,
-                              giLevels[giString]);
-  }
-
-  const uint16_t crc =
-      ppuc::v2::Crc16Ccitt(buffer, ppuc::v2::kHeaderBytes + payloadBytes);
-  buffer[5 + payloadBytes] = static_cast<uint8_t>((crc >> 8) & 0xff);
-  buffer[6 + payloadBytes] = static_cast<uint8_t>(crc & 0xff);
 
   return WriteBytes("OutputStateFrame", buffer, frameBytes);
 }
@@ -1804,21 +1716,8 @@ bool RS485Comm::SendEvent(Event* event) {
   }
 
   uint8_t frame[ppuc::v2::kTriggerFrameBytes];
-  frame[0] = ppuc::v2::kSyncByte;
-  frame[1] = ppuc::v2::ComposeTypeAndFlags(ppuc::v2::kFrameTrigger,
-                                           ppuc::v2::kFlagNone);
-  frame[2] = ppuc::v2::kNoBoard;
-  frame[3] = m_sequence++;
-  frame[4] = m_epoch;
-  frame[5] = event->sourceId;
-  frame[6] = static_cast<uint8_t>((event->eventId >> 8) & 0xFFu);
-  frame[7] = static_cast<uint8_t>(event->eventId & 0xFFu);
-  frame[8] = event->value;
-  const uint16_t crc =
-      ppuc::v2::Crc16Ccitt(frame, ppuc::v2::kHeaderBytes +
-                                      ppuc::v2::kTriggerPayloadBytes);
-  frame[9] = static_cast<uint8_t>((crc >> 8) & 0xFFu);
-  frame[10] = static_cast<uint8_t>(crc & 0xFFu);
+  ppuc::v2::BuildTriggerFrame(frame, ppuc::v2::kNoBoard, m_sequence++, m_epoch,
+                              event->sourceId, event->eventId, event->value);
   return WriteBytes("trigger frame", frame, sizeof(frame));
 }
 
