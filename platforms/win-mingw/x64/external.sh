@@ -35,8 +35,11 @@ cp -a libserialport.h ${PROJECT_SOURCE_ROOT}/third-party/include/
 ./autogen.sh
 ./configure --enable-shared
 make -j${NUM_PROCS}
-cp -a .libs/libserialport.dll.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win-mingw/x64/libserialport64.dll.a
-cp -a .libs/libserialport-0.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/libserialport64-0.dll
+# Plain cp, not "cp -a": libtool emits .libs/libserialport.so.0 (and friends) as
+# symlinks to the versioned real file. "cp -a" implies -P and would stage a
+# dangling symlink, which fails at link time with "cannot find -l:...".
+cp .libs/libserialport.dll.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win-mingw/x64/libserialport64.dll.a
+cp .libs/libserialport-0.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/libserialport64-0.dll
 cd ..
 
 curl -sL https://github.com/jbeder/yaml-cpp/archive/${YAML_CPP_SHA}.zip -o yaml-cpp.zip
@@ -52,14 +55,14 @@ cmake \
   -DYAML_CPP_INSTALL=OFF \
   -B build
 cmake --build build -- -j${NUM_PROCS}
-cp -a build/libyaml-cpp.dll.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win-mingw/x64/
-cp -a build/libyaml-cpp.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
+cp build/libyaml-cpp.dll.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win-mingw/x64/
+cp build/libyaml-cpp.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
 cd ..
 
 UCRT64_BIN="${MINGW_PREFIX}/bin"
-cp -a "${UCRT64_BIN}/libgcc_s_seh-1.dll" ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
-cp -a "${UCRT64_BIN}/libstdc++-6.dll" ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
-cp -a "${UCRT64_BIN}/libwinpthread-1.dll" ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
+cp "${UCRT64_BIN}/libgcc_s_seh-1.dll" ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
+cp "${UCRT64_BIN}/libstdc++-6.dll" ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
+cp "${UCRT64_BIN}/libwinpthread-1.dll" ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win-mingw/x64/
 
 #
 # doctest (unit test framework, header only)

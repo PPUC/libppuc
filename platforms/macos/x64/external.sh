@@ -44,8 +44,11 @@ cp -a libserialport.h ${PROJECT_SOURCE_ROOT}/third-party/include/
 ./autogen.sh
 ./configure --host=x86_64-apple-darwin CFLAGS="-arch x86_64" LDFLAGS="-Wl,-install_name,@rpath/libserialport.dylib"
 make -j${NUM_PROCS}
-cp -a .libs/libserialport.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/macos/x64/
-cp -a .libs/libserialport.dylib ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/macos/x64/
+# Plain cp, not "cp -a": libtool emits .libs/libserialport.so.0 (and friends) as
+# symlinks to the versioned real file. "cp -a" implies -P and would stage a
+# dangling symlink, which fails at link time with "cannot find -l:...".
+cp .libs/libserialport.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/macos/x64/
+cp .libs/libserialport.dylib ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/macos/x64/
 cd ..
 
 #

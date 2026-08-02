@@ -42,8 +42,8 @@ msbuild.exe libserialport.sln \
    -p:Platform=x86 \
    -p:PlatformToolset=v143 \
    -p:Configuration=Release
-cp -a Release/libserialport.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x86
-cp -a Release/libserialport.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x86
+cp Release/libserialport.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x86
+cp Release/libserialport.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x86
 cd ..
 
 #
@@ -63,8 +63,8 @@ cmake -G "Visual Studio 17 2022" -A Win32 \
   -DYAML_CPP_INSTALL=OFF \
   -B build
 cmake --build build --config Release
-cp -a build/Release/yaml-cpp.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x86/
-cp -a build/Release/yaml-cpp*.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x86/
+cp build/Release/yaml-cpp.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x86/
+cp build/Release/yaml-cpp*.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x86/
 cd ..
 
 #

@@ -40,8 +40,8 @@ cd libserialport-$LIBSERIALPORT_SHA
 cp -a libserialport.h ${PROJECT_SOURCE_ROOT}/third-party/include
 patch libserialport.vcxproj < ../../platforms/win/x64/libserialport/001.patch
 msbuild.exe libserialport.sln -p:Configuration=Release -p:Platform=x64
-cp -a x64/Release/libserialport64.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x64
-cp -a x64/Release/libserialport64.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x64
+cp x64/Release/libserialport64.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x64
+cp x64/Release/libserialport64.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x64
 cd ..
 
 
@@ -62,8 +62,8 @@ cmake -G "Visual Studio 17 2022" \
   -DYAML_CPP_INSTALL=OFF \
   -B build
 cmake --build build --config Release
-cp -a build/Release/yaml-cpp.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x64/
-cp -a build/Release/yaml-cpp*.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x64/
+cp build/Release/yaml-cpp.lib ${PROJECT_SOURCE_ROOT}/third-party/build-libs/win/x64/
+cp build/Release/yaml-cpp*.dll ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/win/x64/
 cd ..
 
 #

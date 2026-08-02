@@ -44,8 +44,11 @@ cp -a libserialport.h ${PROJECT_SOURCE_ROOT}/third-party/include
 ./autogen.sh
 ./configure
 make -j${NUM_PROCS}
-cp -a .libs/libserialport.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/linux/aarch64/
-cp -a .libs/libserialport.so.0 ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
+# Plain cp, not "cp -a": libtool emits .libs/libserialport.so.0 (and friends) as
+# symlinks to the versioned real file. "cp -a" implies -P and would stage a
+# dangling symlink, which fails at link time with "cannot find -l:...".
+cp .libs/libserialport.a ${PROJECT_SOURCE_ROOT}/third-party/build-libs/linux/aarch64/
+cp .libs/libserialport.so.0 ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
 cd ..
 
 #
