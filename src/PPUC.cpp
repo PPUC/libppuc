@@ -884,15 +884,18 @@ uint32_t ResolvePwmType(const std::string& type) {
 
 // Whether leaving this device energised indefinitely damages something.
 //
-// Solenoids, motors and shakers move mass and dissipate real power; a lamp
-// does not. Flashers are deliberately excluded for now: a flasher left on will
-// eventually cook its bulb, but they are routinely driven without a pulse
-// bound today and warning on every one of them would bury the coils that
-// matter. Worth revisiting once real configs have been through this.
+// Solenoids, motors and shakers move mass and dissipate real power. Flashers
+// count too: a flasher driven from a PWM output is an incandescent bulb behind
+// a driver transistor, and holding it on cooks the bulb and its socket.
+//
+// A flasher mapped to a WS2812 needs no such protection, and is not a
+// consideration here: addressable LEDs are configured as a role under
+// `ledStripes`, never as a `pwmOutput` entry. Anything reaching this function
+// is driven from a real PWM output.
+//
+// Lamps are the exception - a lamp output is meant to sit on indefinitely.
 bool PwmTypeNeedsThermalProtection(const std::string& type) {
-  const uint32_t resolved = ResolvePwmType(type);
-  return resolved == PWM_TYPE_SOLENOID || resolved == PWM_TYPE_MOTOR ||
-         resolved == PWM_TYPE_SHAKER;
+  return ResolvePwmType(type) != PWM_TYPE_LAMP;
 }
 
 // Reports coils that nothing bounds.

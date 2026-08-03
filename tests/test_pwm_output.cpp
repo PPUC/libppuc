@@ -226,12 +226,58 @@ TEST_CASE("dualWinding must be a boolean") {
 }
 
 TEST_CASE("a lamp is not warned about") {
-  // Lamps have no thermal protection to speak of and must not drown out the
-  // coils that do.
+  // A lamp output is meant to sit on indefinitely. It is the one exemption.
   const auto yaml =
       WithFieldValue(UnprotectedCoil(), "    type: solenoid", "    type: lamp");
 
   CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("a flasher on a PWM output is warned about") {
+  // A flasher driven from a PWM output is an incandescent bulb behind a
+  // driver transistor. Held on, it cooks the bulb and its socket.
+  const auto yaml = WithFieldValue(UnprotectedCoil(), "    type: solenoid",
+                                   "    type: flasher");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
+TEST_CASE("a WS2812 flasher is not a pwmOutput entry at all") {
+  // The distinction that makes warning about every PWM flasher safe: an
+  // addressable-LED flasher is a role inside a ledStripes entry, so it never
+  // reaches the thermal rule. If that ever changes, this test is where it
+  // shows up - a WS2812 flasher needs no pulse bound.
+  const auto yaml = ValidConfig() + R"YAML(
+ledStripes:
+  -
+    board: 2
+    port: 5
+    ledType: GRB
+    brightness: 128
+    amount: 60
+    afterGlow: 0
+    lightUp: 0
+    segments:
+      -
+        number: 1
+        from: 0
+        to: 59
+)YAML";
+
+  CHECK(LoadAndCaptureError(yaml).empty());
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("an unrecognised device type is treated as needing protection") {
+  // ResolvePwmType falls back to solenoid for anything it does not know, and
+  // the safe default for an unknown load is to assume it can burn.
+  const auto yaml = WithFieldValue(UnprotectedCoil(), "    type: solenoid",
+                                   "    type: somethingNew");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
         std::string::npos);
 }
 
