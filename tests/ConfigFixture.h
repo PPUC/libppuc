@@ -11,7 +11,14 @@
 
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <string>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "PPUC.h"
 #include "doctest.h"
@@ -89,17 +96,80 @@ switches:
 )YAML";
 }
 
+// Runs `fn` with stdout redirected to a file and returns what it wrote.
+//
+// Both loaders route through this so a validation warning never leaks into the
+// test runner's output, where it reads like a failure.
+template <typename Fn>
+inline std::string CaptureStdout(Fn&& fn) {
+  static int counter = 0;
+  const std::string outPath = std::string(P_tmpdir) + "/ppuc_test_stdout_" +
+                              std::to_string(counter++) + ".txt";
+
+  fflush(stdout);
+#ifdef _WIN32
+  const int savedFd = _dup(_fileno(stdout));
+#else
+  const int savedFd = dup(fileno(stdout));
+#endif
+  REQUIRE(savedFd >= 0);
+  REQUIRE(freopen(outPath.c_str(), "w", stdout) != nullptr);
+
+  fn();
+
+  fflush(stdout);
+#ifdef _WIN32
+  _dup2(savedFd, _fileno(stdout));
+  _close(savedFd);
+#else
+  dup2(savedFd, fileno(stdout));
+  close(savedFd);
+#endif
+  clearerr(stdout);
+
+  std::ifstream in(outPath);
+  std::string captured((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+  in.close();
+  std::remove(outPath.c_str());
+  return captured;
+}
+
 // Loads a configuration and returns the error message, or an empty string when
-// the configuration was accepted.
+// the configuration was accepted. Anything printed along the way is swallowed;
+// use LoadAndCaptureStdout when that is what the test is about.
 inline std::string LoadAndCaptureError(const std::string& yaml) {
   TempYaml file(yaml);
-  PPUC ppuc;
-  try {
-    ppuc.LoadConfiguration(file.path());
-  } catch (const std::exception& e) {
-    return e.what();
-  }
-  return {};
+  std::string error;
+  CaptureStdout([&] {
+    PPUC ppuc;
+    try {
+      ppuc.LoadConfiguration(file.path());
+    } catch (const std::exception& e) {
+      error = e.what();
+    }
+  });
+  return error;
+}
+
+// Loads a configuration and returns whatever it printed to stdout.
+//
+// Warnings are not exceptions, so there is nothing to catch. Rather than
+// exposing the warning collector as API purely for tests - which would let the
+// tests pass while the message never actually reaches a user - this captures
+// the real output of the real entry point, the same text an operator sees in
+// their terminal.
+inline std::string LoadAndCaptureStdout(const std::string& yaml) {
+  TempYaml file(yaml);
+  return CaptureStdout([&] {
+    try {
+      PPUC ppuc;
+      ppuc.LoadConfiguration(file.path());
+    } catch (const std::exception&) {
+      // A rejected configuration may still have warned first; the caller
+      // decides what it cares about.
+    }
+  });
 }
 
 }  // namespace ppuc_test

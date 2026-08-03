@@ -9,6 +9,7 @@
 #include "ConfigFixture.h"
 
 using ppuc_test::LoadAndCaptureError;
+using ppuc_test::LoadAndCaptureStdout;
 using ppuc_test::ValidConfig;
 
 namespace {
@@ -98,6 +99,11 @@ TEST_CASE("a solenoid with a max pulse time is accepted") {
 TEST_CASE("a solenoid relying on hold power is accepted") {
   // maxPulseTime 0 is correct here: holdPower drops the duty cycle to a
   // current the coil can dissipate indefinitely, so unlimited on-time is safe.
+  //
+  // holdPowerActivationTime matters as much as holdPower. PwmDevices only
+  // reduces power when `holdPowerActivationTime > 0`, so a hold power with an
+  // activation time of 0 never engages and protects nothing. This test used to
+  // set only holdPower and describe the result as safe; it was not.
   auto yaml = WithPwm();
   const auto pos = yaml.find("    maxPulseTime: 120");
   REQUIRE(pos != std::string::npos);
@@ -107,27 +113,142 @@ TEST_CASE("a solenoid relying on hold power is accepted") {
   REQUIRE(hp != std::string::npos);
   yaml.replace(hp, std::string("    holdPower: 0").size(),
                "    holdPower: 40");
+  const auto hpat = yaml.find("    holdPowerActivationTime: 0");
+  REQUIRE(hpat != std::string::npos);
+  yaml.replace(hpat, std::string("    holdPowerActivationTime: 0").size(),
+               "    holdPowerActivationTime: 30");
 
   CHECK(LoadAndCaptureError(yaml).empty());
 }
 
-TEST_CASE("KNOWN GAP: a solenoid with no thermal protection is accepted") {
-  // maxPulseTime 0 with holdPower 0 means nothing bounds how long this coil
-  // can stay energised. For a single-winding coil that is a fire risk; for a
-  // dual-wound coil with an EOS contact it is correct, and the configuration
-  // cannot currently express the difference.
-  //
-  // This test characterises today's behaviour rather than endorsing it. When
-  // the validator from STABILIZATION_PLAN.md 2.2 lands, this test SHOULD fail
-  // and must be rewritten to assert rejection. Failing here is the reminder.
-  auto yaml = WithPwm();
-  const auto pos = yaml.find("    maxPulseTime: 120");
-  REQUIRE(pos != std::string::npos);
-  yaml.replace(pos, std::string("    maxPulseTime: 120").size(),
-               "    maxPulseTime: 0");
+// --- thermal protection (STABILIZATION_PLAN.md 2.2) --------------------------
+//
+// A solenoid needs at least one of: maxPulseTime, hold power, or its own hold
+// winding declared with dualWinding. With none of them, nothing bounds how
+// long the coil stays energised.
+//
+// These warn rather than reject, for one release: every existing game config
+// predates dualWinding, so a correctly wired dual-wound flipper currently
+// looks exactly like an unprotected kicker. See the note in
+// WarnAboutUnprotectedSolenoids().
 
-  CHECK_MESSAGE(
-      LoadAndCaptureError(yaml).empty(),
-      "if this now fails, the coil protection validator has landed - rewrite "
-      "this test to assert the rejection instead");
+namespace {
+
+// Replaces `key: <old>` with `key: <new>` in the pwmOutput entry.
+std::string WithFieldValue(std::string yaml, const std::string& line,
+                           const std::string& replacement) {
+  const auto pos = yaml.find(line);
+  REQUIRE_MESSAGE(pos != std::string::npos, "fixture no longer contains " << line);
+  yaml.replace(pos, line.size(), replacement);
+  return yaml;
+}
+
+// The fixture coil, stripped of every protection mechanism.
+std::string UnprotectedCoil() {
+  return WithFieldValue(WithPwm(), "    maxPulseTime: 120",
+                        "    maxPulseTime: 0");
+}
+
+}  // namespace
+
+TEST_CASE("a solenoid with no thermal protection is warned about") {
+  const auto output = LoadAndCaptureStdout(UnprotectedCoil());
+
+  CHECK(output.find("WARNING") != std::string::npos);
+  CHECK(output.find("no thermal protection") != std::string::npos);
+  // The operator has to be able to find the offending entry.
+  CHECK(output.find("Outhole Kicker") != std::string::npos);
+  CHECK(output.find("pwmOutput[0]") != std::string::npos);
+}
+
+TEST_CASE("an unprotected solenoid is still accepted, for now") {
+  // Deliberate: warn for one release, then error. Existing configs predate
+  // dualWinding and refusing to start the machine over that costs more than
+  // it protects.
+  CHECK(LoadAndCaptureError(UnprotectedCoil()).empty());
+}
+
+TEST_CASE("maxPulseTime alone counts as protection") {
+  CHECK(LoadAndCaptureStdout(WithPwm()).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("hold power counts as protection") {
+  auto yaml = UnprotectedCoil();
+  yaml = WithFieldValue(yaml, "    holdPower: 0", "    holdPower: 64");
+  yaml = WithFieldValue(yaml, "    holdPowerActivationTime: 0",
+                        "    holdPowerActivationTime: 30");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("hold power without an activation time does not count") {
+  // A hold power that never engages protects nothing.
+  auto yaml = WithFieldValue(UnprotectedCoil(), "    holdPower: 0",
+                             "    holdPower: 64");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
+TEST_CASE("dualWinding counts as protection") {
+  // A dual-wound flipper with an EOS contact holding on its own winding is
+  // correct with maxPulseTime 0. This is the case the configuration could not
+  // express before.
+  const auto yaml = UnprotectedCoil() + "    dualWinding: true\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("dualWinding false does not count as protection") {
+  const auto yaml = UnprotectedCoil() + "    dualWinding: false\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
+TEST_CASE("an eosSwitch number is accepted alongside dualWinding") {
+  const auto yaml =
+      UnprotectedCoil() + "    dualWinding: true\n    eosSwitch: 42\n";
+
+  CHECK(LoadAndCaptureError(yaml).empty());
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("dualWinding must be a boolean") {
+  const auto yaml = UnprotectedCoil() + "    dualWinding: maybe\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("dualWinding") != std::string::npos);
+}
+
+TEST_CASE("a lamp is not warned about") {
+  // Lamps have no thermal protection to speak of and must not drown out the
+  // coils that do.
+  const auto yaml =
+      WithFieldValue(UnprotectedCoil(), "    type: solenoid", "    type: lamp");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("a motor is warned about like a solenoid") {
+  // Motors move mass and have end-of-stroke contacts; an unbounded pulse is
+  // the same class of problem.
+  const auto yaml = WithFieldValue(UnprotectedCoil(), "    type: solenoid",
+                                   "    type: motor");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
+TEST_CASE("a shaker is warned about like a solenoid") {
+  const auto yaml = WithFieldValue(UnprotectedCoil(), "    type: solenoid",
+                                   "    type: shaker");
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
 }

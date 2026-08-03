@@ -526,6 +526,17 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                               item, itemPath, "type");
                           ValidateOptionalField<bool>(
                               item, itemPath, "ballSearch");
+                          // Declares a coil that carries its own hold winding,
+                          // so an unbounded pulse on the power winding is not
+                          // the fire risk it would otherwise be. See
+                          // WarnAboutUnprotectedSolenoids below.
+                          ValidateOptionalField<bool>(
+                              item, itemPath, "dualWinding");
+                          // The end-of-stroke contact, when it is wired back to
+                          // an input rather than only breaking the power
+                          // winding. Optional even for a dual-wound coil.
+                          ValidateOptionalField<uint32_t>(
+                              item, itemPath, "eosSwitch");
                           ValidateOptionalItems(
                               item, "effects", itemPath,
                               [](const YAML::Node& effect,
@@ -719,11 +730,17 @@ uint8_t PPUC::ResolveLedType(const std::string& type) {
   return ResolveLedTypeValue(type);
 }
 
+namespace {
+// Defined below, next to ResolvePwmType which it depends on.
+void WarnAboutUnprotectedSolenoids(const YAML::Node& config);
+}  // namespace
+
 void PPUC::LoadConfiguration(const char* configFile) {
   // Load config file. But options set via command line are preferred.
   try {
     m_ppucConfig = YAML::LoadFile(configFile);
     ValidatePpucConfiguration(m_ppucConfig);
+    WarnAboutUnprotectedSolenoids(m_ppucConfig);
     m_switchGroups = ParseSwitchGroups(m_ppucConfig);
     m_coilGiMappings = ParseCoilGiMappings(m_ppucConfig);
   } catch (const YAML::Exception& e) {
@@ -863,6 +880,80 @@ uint32_t ResolvePwmType(const std::string& type) {
     return PWM_TYPE_SHAKER;
   }
   return PWM_TYPE_SOLENOID;
+}
+
+// Whether leaving this device energised indefinitely damages something.
+//
+// Solenoids, motors and shakers move mass and dissipate real power; a lamp
+// does not. Flashers are deliberately excluded for now: a flasher left on will
+// eventually cook its bulb, but they are routinely driven without a pulse
+// bound today and warning on every one of them would bury the coils that
+// matter. Worth revisiting once real configs have been through this.
+bool PwmTypeNeedsThermalProtection(const std::string& type) {
+  const uint32_t resolved = ResolvePwmType(type);
+  return resolved == PWM_TYPE_SOLENOID || resolved == PWM_TYPE_MOTOR ||
+         resolved == PWM_TYPE_SHAKER;
+}
+
+// Reports coils that nothing bounds.
+//
+// A solenoid needs at least one mechanism to stop it staying energised:
+//
+//   1. maxPulseTime > 0        - the board drops it after that long
+//   2. hold power              - holdPower > 0 with holdPowerActivationTime,
+//                                so it falls back to a current the coil can
+//                                survive continuously
+//   3. dualWinding: true       - the coil has its own hold winding, and its
+//                                EOS contact transfers to it mechanically
+//
+// With none of them, a single-winding coil that the ROM leaves on burns out,
+// and takes the driver transistor and possibly more with it.
+//
+// This warns rather than rejects, for one release. Every existing game config
+// predates the dualWinding field, so a correctly wired dual-wound flipper is
+// indistinguishable from an unprotected kicker until those configs are
+// re-exported. Refusing to start the machine over that would cost more than
+// it protects. The intent is to make it an error once configs have caught up.
+void WarnAboutUnprotectedSolenoids(const YAML::Node& config) {
+  const YAML::Node& pwmOutput = config["pwmOutput"];
+  if (!HasSequenceItems(pwmOutput)) {
+    return;
+  }
+
+  size_t index = 0;
+  for (const YAML::Node& item : pwmOutput) {
+    const std::string itemPath = "pwmOutput[" + std::to_string(index++) + "]";
+
+    if (!PwmTypeNeedsThermalProtection(item["type"].as<std::string>())) {
+      continue;
+    }
+
+    const uint32_t maxPulseTime = item["maxPulseTime"].as<uint32_t>();
+    const uint32_t holdPower = item["holdPower"].as<uint32_t>();
+    const uint32_t holdPowerActivationTime =
+        item["holdPowerActivationTime"].as<uint32_t>();
+    const bool dualWinding =
+        item["dualWinding"] && item["dualWinding"].as<bool>();
+
+    if (maxPulseTime > 0 || (holdPower > 0 && holdPowerActivationTime > 0) ||
+        dualWinding) {
+      continue;
+    }
+
+    const std::string description =
+        item["description"] ? item["description"].as<std::string>() : "";
+
+    printf(
+        "PPUC: WARNING: %s ('%s', number %u) has no thermal protection: "
+        "maxPulseTime is 0, holdPower is 0 and dualWinding is not set.\n"
+        "PPUC: WARNING: nothing bounds how long this device can stay "
+        "energised. Set maxPulseTime, or holdPower together with "
+        "holdPowerActivationTime, or declare 'dualWinding: true' if this coil "
+        "has its own hold winding and an EOS contact. At %s.\n",
+        itemPath.c_str(), description.c_str(),
+        static_cast<unsigned>(item["number"].as<uint32_t>()),
+        FormatYamlLocation(item.Mark()).c_str());
+  }
 }
 
 bool IsDecimalScalar(const std::string& value) {
