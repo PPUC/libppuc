@@ -31,6 +31,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - id: depkey
+        name: Compute dependency cache key
+        run: |
+          # See the build job for why IO_BOARDS_SHA is left out of the key.
+          KEY=$( {
+            grep -E '^(LIBSERIALPORT_SHA|YAML_CPP_SHA|DOCTEST_VERSION)=' platforms/config.sh
+            cat platforms/linux/x64/external.sh
+          } | git hash-object --stdin )
+          echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+      - name: Cache third-party dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            external
+            third-party
+          key: libppuc-deps-linux-x64-${{ steps.depkey.outputs.key }}
+          restore-keys: |
+            libppuc-deps-linux-x64-
       - name: Build and run unit tests
         run: |
           BUILD_TYPE=Release ./platforms/linux/x64/external.sh
@@ -72,6 +90,37 @@ jobs:
             arch: aarch64
     steps:
       - uses: actions/checkout@v6
+      - id: depkey
+        name: Compute dependency cache key
+        run: |
+          # Hash what decides whether a dependency must be rebuilt: the
+          # third-party pins plus this platform's external.sh.
+          #
+          # IO_BOARDS_SHA is deliberately excluded. It changes on almost every
+          # commit, but staging it is a handful of header copies, while
+          # libserialport and yaml-cpp are compiled from source. Including it
+          # would discard the cache to save no time - external.sh re-stages
+          # io-boards on its own, because its cache.txt marker will not match.
+          KEY=$( {
+            grep -E '^(LIBSERIALPORT_SHA|YAML_CPP_SHA|DOCTEST_VERSION)=' platforms/config.sh
+            cat platforms/${{ matrix.platform }}/${{ matrix.arch }}/external.sh
+          } | git hash-object --stdin )
+          echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+      - name: Cache third-party dependencies
+        uses: actions/cache@v5
+        with:
+          # external/ holds the dependency source and build trees; third-party/
+          # holds the headers and libraries staged out of them. Both are needed:
+          # on a cache hit external.sh skips a dependency entirely, including
+          # the step that copies its artifacts into third-party/.
+          path: |
+            external
+            third-party
+          key: libppuc-deps-${{ matrix.platform }}-${{ matrix.arch }}-${{ steps.depkey.outputs.key }}
+          # A partial hit still helps: external.sh rebuilds only the
+          # dependencies whose own cache.txt no longer matches.
+          restore-keys: |
+            libppuc-deps-${{ matrix.platform }}-${{ matrix.arch }}-
       - if: (matrix.platform == 'win-mingw')
         name: Set up MSYS2 MinGW (win runner)
         uses: msys2/setup-msys2@v2

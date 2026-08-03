@@ -2,13 +2,14 @@
 
 set -e
 
-IO_BOARDS_SHA=da4cdddf9ff0d09c4e46db922af6cef250aca60a
+IO_BOARDS_SHA=2650ce495af6c44b218eb1b03886e35a12cbe08f
 LIBSERIALPORT_SHA=21b3dfe5f68c205be4086469335fd2fc2ce11ed2
 YAML_CPP_SHA=28f93bdec6387d42332220afa9558060c8016795
 DOCTEST_VERSION=2.4.11
 
 
 PROJECT_SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SOURCE_DIR_CACHE_BUSTER="${SOURCE_DIR_CACHE_BUSTER:-$(date +%s)}"
 
 dependency_source_dir() {
    local var_name="$1"
@@ -19,6 +20,56 @@ dependency_source_dir() {
    fi
 
    (cd "${PROJECT_SOURCE_ROOT}" && cd "${source_dir}" && pwd -P)
+}
+
+ppuc_source_dir_fingerprint() {
+   # A stable fingerprint of a local dependency checkout: its commit plus any
+   # uncommitted work. Used so that building from a source directory rebuilds
+   # when the sources actually changed, rather than on every invocation.
+   #
+   # Falls back to the timestamp for anything that is not a git checkout, which
+   # restores the old always-rebuild behaviour for that case.
+   #
+   # Kept identical to ppuc/platforms/config.sh: both projects cache their
+   # dependencies the same way, and a divergence here would mean a dependency
+   # rebuilds in one project but not the other.
+   local dir="$1"
+   local head
+   local dirty
+
+   if ! head="$(git -C "${dir}" rev-parse HEAD 2>/dev/null)"; then
+      echo "${SOURCE_DIR_CACHE_BUSTER}"
+      return 0
+   fi
+
+   # Hash with git rather than shasum/sha1sum: git is definitionally available
+   # here (the branch above already used it), whereas shasum is a Perl script
+   # that is not guaranteed on every build host. A missing hasher would have
+   # silently degraded the fingerprint to commit-only rather than failing.
+   dirty="$( {
+      # Content of tracked modifications.
+      git -C "${dir}" diff HEAD
+      # Content of untracked files, so a new or edited untracked source file
+      # (a test suite, for instance) still triggers a rebuild.
+      git -C "${dir}" ls-files --others --exclude-standard | while read -r f; do
+         git hash-object "${dir}/${f}" 2>/dev/null
+      done
+   } 2>/dev/null | git hash-object --stdin | cut -c1-12 )"
+
+   echo "${head:0:12}-${dirty}"
+}
+
+dependency_cache_key() {
+   local sha="$1"
+   local source_var="$2"
+   local source_dir
+
+   source_dir="$(dependency_source_dir "${source_var}")"
+   if [ -n "${source_dir}" ]; then
+      echo "source:${source_dir}:$(ppuc_source_dir_fingerprint "${source_dir}")"
+   else
+      echo "${sha}"
+   fi
 }
 
 print_dependency_source() {
