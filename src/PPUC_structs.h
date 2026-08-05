@@ -77,6 +77,31 @@ struct PPUCLamp {
 //
 // Raw counts only, no derived rates - there is nothing here to get wrong, and
 // whoever reads them can divide.
+// What a board reports about itself when asked, before any session exists.
+struct PPUCBoardVersion {
+  uint8_t board = 0;
+  bool responded = false;
+  uint8_t firmwareMajor = 0;
+  uint8_t firmwareMinor = 0;
+  uint8_t firmwarePatch = 0;
+  uint8_t adminProtocolMajor = 0;
+  uint8_t adminProtocolMinor = 0;
+  uint8_t capabilities = 0;
+
+  std::string FirmwareVersion() const {
+    return std::to_string(firmwareMajor) + "." + std::to_string(firmwareMinor) +
+           "." + std::to_string(firmwarePatch);
+  }
+
+  // Ordering for "is the file newer than the board", so the comparison lives
+  // in one place rather than being open-coded wherever it is needed.
+  uint32_t FirmwareOrdinal() const {
+    return (static_cast<uint32_t>(firmwareMajor) << 16) |
+           (static_cast<uint32_t>(firmwareMinor) << 8) |
+           static_cast<uint32_t>(firmwarePatch);
+  }
+};
+
 struct PPUCBusHealth {
   // Switch reply chains: one per poll cycle round the configured boards.
   uint32_t switchReplyChains = 0;       // attempted

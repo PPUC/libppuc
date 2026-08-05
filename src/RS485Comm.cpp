@@ -1492,6 +1492,86 @@ bool RS485Comm::SendRestartFrame() {
   return false;
 }
 
+PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
+                                              uint32_t timeoutMs) {
+  PPUCBoardVersion result;
+  result.board = board;
+  if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
+    return result;
+  }
+
+  // Anything still in flight would be read as the reply.
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+
+  uint8_t query[ppuc::v2::kAdminFrameBytes];
+  ppuc::v2::BuildVersionQueryFrame(query, board, m_sequence++, m_epoch);
+  if (!WriteBytes("AdminVersionQuery", query, sizeof(query))) {
+    return result;
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(timeoutMs);
+  uint8_t frame[ppuc::v2::kAdminFrameBytes];
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    // Hunt for sync, then read the rest of a fixed-size admin frame. A board
+    // that is mid-boot can emit anything, so nothing here assumes the first
+    // byte seen is ours.
+    uint8_t byte = 0;
+    if (sp_blocking_read(m_pSerialPort, &byte, 1, 5) <= 0) {
+      continue;
+    }
+    if (byte != ppuc::v2::kSyncByte) {
+      continue;
+    }
+    frame[0] = byte;
+
+    size_t got = 1;
+    bool complete = true;
+    while (got < sizeof(frame)) {
+      const int read = sp_blocking_read(m_pSerialPort, &frame[got],
+                                        sizeof(frame) - got, 5);
+      if (read <= 0) {
+        complete = false;
+        break;
+      }
+      got += static_cast<size_t>(read);
+    }
+    if (!complete) {
+      continue;
+    }
+
+    if (ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin) {
+      continue;
+    }
+    if (!ppuc::v2::VerifyCrc(frame, sizeof(frame))) {
+      ReportAnomaly(Anomaly::FrameCrc,
+                    "Invalid admin frame CRC while querying board %u", board);
+      continue;
+    }
+
+    uint8_t command = 0;
+    uint8_t reportedBoard = 0;
+    uint8_t data[ppuc::v2::kAdminDataBytes] = {0};
+    ppuc::v2::ReadAdminPayload(&frame[ppuc::v2::kHeaderBytes], command,
+                               reportedBoard, data);
+    if (command != ppuc::v2::kAdminVersionReport || reportedBoard != board) {
+      continue;
+    }
+
+    result.responded = true;
+    result.firmwareMajor = data[ppuc::v2::kAdminVersionFirmwareMajor];
+    result.firmwareMinor = data[ppuc::v2::kAdminVersionFirmwareMinor];
+    result.firmwarePatch = data[ppuc::v2::kAdminVersionFirmwarePatch];
+    result.adminProtocolMajor = data[ppuc::v2::kAdminVersionProtocolMajor];
+    result.adminProtocolMinor = data[ppuc::v2::kAdminVersionProtocolMinor];
+    result.capabilities = data[ppuc::v2::kAdminVersionCapabilities];
+    return result;
+  }
+
+  return result;
+}
+
 bool RS485Comm::SendSwitchRefreshFrame(uint8_t nextBoard) {
   if (m_pSerialPort == NULL ||
       !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig) ||

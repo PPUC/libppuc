@@ -81,6 +81,14 @@ class PPUCAPI PPUC {
   // hoping someone saw them scroll past.
   std::vector<std::string> GetRecentAnomalies();
 
+  // Asks every configured board what firmware it is running.
+  //
+  // Boards are polled one at a time: administration happens outside the switch
+  // chain, so nothing arbitrates who replies to a broadcast. Entries for
+  // boards that did not answer are returned with responded == false rather
+  // than omitted, so a missing board is visible instead of silently absent.
+  std::vector<PPUCBoardVersion> QueryBoardVersions();
+
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
   uint8_t GetPlatform() { return m_platform; };

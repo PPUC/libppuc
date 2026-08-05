@@ -122,6 +122,11 @@ class RS485Comm {
   PPUCSwitchState* GetNextSwitchState();
   uint32_t GetCleanSwitchReplyChainCount() const;
   PPUCBusHealth GetBusHealth() const;
+
+  // Asks one board what it is running. Polls a single board rather than
+  // broadcasting: administration happens outside the switch chain, so nothing
+  // arbitrates who replies.
+  PPUCBoardVersion QueryBoardVersion(uint8_t board, uint32_t timeoutMs = 250);
   std::vector<std::string> GetRecentAnomalies() const;
   bool IsBoardActive(uint8_t number) const;
   bool SetVirtualSwitchState(uint16_t number, uint8_t state);

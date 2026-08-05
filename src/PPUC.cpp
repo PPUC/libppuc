@@ -1948,6 +1948,26 @@ std::vector<std::string> PPUC::GetRecentAnomalies() {
   return m_pRS485Comm->GetRecentAnomalies();
 }
 
+std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions() {
+  std::vector<PPUCBoardVersion> versions;
+
+  std::set<uint8_t> boards;
+  const YAML::Node& configured = m_ppucConfig["boards"];
+  if (HasSequenceItems(configured)) {
+    for (YAML::Node board : configured) {
+      const uint8_t number = board["number"].as<uint8_t>();
+      if (m_skippedBoards.find(number) == m_skippedBoards.end()) {
+        boards.insert(number);
+      }
+    }
+  }
+
+  for (uint8_t board : boards) {
+    versions.push_back(m_pRS485Comm->QueryBoardVersion(board));
+  }
+  return versions;
+}
+
 uint32_t PPUC::GetCleanSwitchReplyChainCount() {
   return m_pRS485Comm->GetCleanSwitchReplyChainCount();
 }
