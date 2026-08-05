@@ -1566,6 +1566,7 @@ PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
     result.adminProtocolMajor = data[ppuc::v2::kAdminVersionProtocolMajor];
     result.adminProtocolMinor = data[ppuc::v2::kAdminVersionProtocolMinor];
     result.capabilities = data[ppuc::v2::kAdminVersionCapabilities];
+    result.boardType = data[ppuc::v2::kAdminVersionBoardType];
     return result;
   }
 
@@ -1620,13 +1621,30 @@ bool RS485Comm::AwaitAdminReply(uint8_t board, uint8_t expectedCommand,
 }
 
 PPUCFirmwareUpdateResult RS485Comm::UpdateBoardFirmware(
-    uint8_t board, const uint8_t* image, size_t imageBytes,
-    PPUC_FirmwareProgressCallback progress, void* progressUserData) {
+    uint8_t board, uint8_t imageBoardType, const uint8_t* image,
+    size_t imageBytes, PPUC_FirmwareProgressCallback progress,
+    void* progressUserData) {
   PPUCFirmwareUpdateResult result;
   result.board = board;
 
   if (m_pSerialPort == NULL || image == nullptr || imageBytes == 0) {
     result.error = "no image or no serial port";
+    return result;
+  }
+
+  // Confirm what is on the other end immediately before writing to it. The
+  // caller has already matched image to board, but that decision was made
+  // against a version report taken earlier, and this is the last moment at
+  // which a mismatch costs nothing.
+  const PPUCBoardVersion current = QueryBoardVersion(board);
+  if (!current.responded) {
+    result.error = "board did not answer a version query before the transfer";
+    return result;
+  }
+  if (imageBoardType != ppuc::v2::kBoardTypeUnknown &&
+      current.boardType != imageBoardType) {
+    result.status = ppuc::v2::kUpdateUnsupported;
+    result.error = "image is for a different board type";
     return result;
   }
 

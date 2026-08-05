@@ -92,8 +92,8 @@ class PPUCAPI PPUC {
   // Sends a firmware image to one board. Call StopUpdates() first: the runtime
   // loop must not be transmitting into the middle of a transfer.
   PPUCFirmwareUpdateResult UpdateBoardFirmware(
-      uint8_t board, const uint8_t* image, size_t imageBytes,
-      PPUC_FirmwareProgressCallback progress = nullptr,
+      uint8_t board, uint8_t imageBoardType, const uint8_t* image,
+      size_t imageBytes, PPUC_FirmwareProgressCallback progress = nullptr,
       void* progressUserData = nullptr);
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };

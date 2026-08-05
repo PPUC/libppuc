@@ -134,8 +134,9 @@ class RS485Comm {
   // next is sent. Slower than streaming, but a board that falls behind stops
   // the transfer instead of silently losing the middle of its own firmware.
   PPUCFirmwareUpdateResult UpdateBoardFirmware(
-      uint8_t board, const uint8_t* image, size_t imageBytes,
-      PPUC_FirmwareProgressCallback progress, void* progressUserData);
+      uint8_t board, uint8_t imageBoardType, const uint8_t* image,
+      size_t imageBytes, PPUC_FirmwareProgressCallback progress,
+      void* progressUserData);
 
  private:
   // Waits for one admin reply with the given command. Returns false on

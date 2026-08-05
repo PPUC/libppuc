@@ -101,6 +101,9 @@ struct PPUCBoardVersion {
   uint8_t adminProtocolMajor = 0;
   uint8_t adminProtocolMinor = 0;
   uint8_t capabilities = 0;
+  // Which board this is. Firmware is board-specific, so an image may only be
+  // sent to a board whose type it was built for.
+  uint8_t boardType = 0;
 
   std::string FirmwareVersion() const {
     return std::to_string(firmwareMajor) + "." + std::to_string(firmwareMinor) +
