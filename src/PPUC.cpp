@@ -1948,14 +1948,6 @@ std::vector<std::string> PPUC::GetRecentAnomalies() {
   return m_pRS485Comm->GetRecentAnomalies();
 }
 
-const char* PPUCBoardTypeName(uint8_t type) {
-  return ppuc::v2::BoardTypeName(type);
-}
-
-uint8_t PPUCBoardTypeFromName(const char* name) {
-  return ppuc::v2::BoardTypeFromName(name);
-}
-
 PPUCFirmwareUpdateResult PPUC::UpdateBoardFirmware(
     uint8_t board, uint8_t imageBoardType, const uint8_t* image,
     size_t imageBytes, PPUC_FirmwareProgressCallback progress,
