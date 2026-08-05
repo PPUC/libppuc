@@ -27,6 +27,15 @@
 
 class RS485Comm;
 
+// Board type names, forwarded from the protocol definition.
+//
+// Exposed here because ppuc.cpp cannot include the protocol header: it has a
+// global variable called `ppuc`, which cannot coexist with a namespace of the
+// same name. The mapping still has exactly one definition - these forward to
+// ppuc::v2::BoardTypeName / BoardTypeFromName.
+PPUCAPI const char* PPUCBoardTypeName(uint8_t type);
+PPUCAPI uint8_t PPUCBoardTypeFromName(const char* name);
+
 struct PPUCCoilGiMapping {
   uint16_t coil = 0;
   uint8_t gi = 0;
