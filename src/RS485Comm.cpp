@@ -255,6 +255,22 @@ void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
   state.everRecorded = true;
 }
 
+namespace {
+const char* AnomalyName(RS485Comm::Anomaly kind) {
+  switch (kind) {
+    case RS485Comm::Anomaly::SerialWrite: return "serial write";
+    case RS485Comm::Anomaly::FrameCrc: return "frame CRC";
+    case RS485Comm::Anomaly::ConfigAck: return "config ack";
+    case RS485Comm::Anomaly::SwitchChainMiss: return "switch chain miss";
+    case RS485Comm::Anomaly::EpochMismatch: return "epoch mismatch";
+    case RS485Comm::Anomaly::BoardStatus: return "board status";
+    case RS485Comm::Anomaly::QueueOverflow: return "output queue overflow";
+    case RS485Comm::Anomaly::SessionResync: return "session resync";
+    default: return "unknown";
+  }
+}
+}  // namespace
+
 std::vector<std::string> RS485Comm::GetRecentAnomalies() const {
   std::lock_guard<std::mutex> lock(
       const_cast<std::mutex&>(m_anomalyMutex));
@@ -270,6 +286,20 @@ std::vector<std::string> RS485Comm::GetRecentAnomalies() const {
     const AnomalyLogEntry& e =
         m_anomalyLog[(start + i) % kAnomalyLogSize];
     out.emplace_back(std::to_string(e.wallMs) + " " + e.text);
+  }
+
+  // A burst that stopped is otherwise invisible here: its repeats sit in the
+  // suppression counter waiting for a next occurrence that may never arrive.
+  // Report what is still pending so the last thing to go wrong is not the one
+  // thing missing from the record.
+  for (size_t i = 0; i < static_cast<size_t>(Anomaly::Count); ++i) {
+    const uint32_t pending = m_anomalies[i].suppressed;
+    if (pending == 0) {
+      continue;
+    }
+    out.emplace_back(std::string("(") + std::to_string(pending) +
+                     " further " + AnomalyName(static_cast<Anomaly>(i)) +
+                     " occurrence(s) not recorded individually)");
   }
   return out;
 }
