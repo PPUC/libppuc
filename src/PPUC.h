@@ -76,6 +76,11 @@ class PPUCAPI PPUC {
   // Bus recovery counters since startup. See PPUCBusHealth.
   PPUCBusHealth GetBusHealth();
 
+  // The most recent unexpected conditions, oldest first, held in RAM because
+  // the target has no filesystem to log to. Retrieve over ssh rather than
+  // hoping someone saw them scroll past.
+  std::vector<std::string> GetRecentAnomalies();
+
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
   uint8_t GetPlatform() { return m_platform; };

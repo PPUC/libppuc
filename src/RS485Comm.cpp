@@ -191,16 +191,18 @@ void RS485Comm::DebugPrintf(const char* format, ...) {
 }
 
 void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
-  // Always reported. These are conditions that should not happen, and one that
-  // is only visible with tracing switched on is one nobody sees on a machine at
-  // an event - where enabling tracing would also perturb the timing being
-  // diagnosed.
+  // Always *recorded*, printed only when someone is watching.
+  //
+  // ppuc-pinmame normally runs headless on a read-only Raspberry Pi: no
+  // filesystem to log to, no console to print to, and nobody reading stdout.
+  // So the counters and the in-memory ring are the real output, and printing
+  // is for the case where it was started by hand over ssh.
   //
   // Rate limited per kind rather than silenced: a broken bus can raise the same
-  // fault every cycle, and printf on this thread is slow enough that flooding
-  // would itself delay the loop. The first occurrence prints immediately, so
-  // nothing is ever missed entirely; repeats are counted and folded into a
-  // periodic line, so the volume stays bounded no matter how bad it gets.
+  // fault every cycle, and neither the ring nor a terminal is served by 100
+  // identical lines a second. The first occurrence is recorded immediately, so
+  // nothing is missed entirely; repeats are counted and folded into the next
+  // entry, so the ring keeps a span of history rather than one bad millisecond.
   static constexpr auto kRepeatInterval = std::chrono::seconds(5);
 
   AnomalyState& state = m_anomalies[static_cast<size_t>(kind)];
@@ -211,7 +213,7 @@ void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
   std::lock_guard<std::mutex> lock(m_anomalyMutex);
 
   const auto now = std::chrono::steady_clock::now();
-  if (state.everPrinted && (now - state.lastPrint) < kRepeatInterval) {
+  if (state.everRecorded && (now - state.lastRecord) < kRepeatInterval) {
     ++state.suppressed;
     return;
   }
@@ -233,13 +235,43 @@ void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
              static_cast<long long>(kRepeatInterval.count()));
   }
 
-  printf("%lld PPUC ERROR: %s%s\n", static_cast<long long>(wallMs), buffer,
-         repeats);
-  fflush(stdout);
+  AnomalyLogEntry& entry = m_anomalyLog[m_anomalyLogHead];
+  snprintf(entry.text, sizeof(entry.text), "%s%s", buffer, repeats);
+  entry.wallMs = static_cast<int64_t>(wallMs);
+  m_anomalyLogHead = (m_anomalyLogHead + 1) % kAnomalyLogSize;
+  if (m_anomalyLogCount < kAnomalyLogSize) {
+    ++m_anomalyLogCount;
+  }
+
+  // Only when somebody asked to watch. See the note above.
+  if (m_debug || m_debugErrors) {
+    printf("%lld PPUC ERROR: %s%s\n", static_cast<long long>(wallMs), buffer,
+           repeats);
+    fflush(stdout);
+  }
 
   state.suppressed = 0;
-  state.lastPrint = now;
-  state.everPrinted = true;
+  state.lastRecord = now;
+  state.everRecorded = true;
+}
+
+std::vector<std::string> RS485Comm::GetRecentAnomalies() const {
+  std::lock_guard<std::mutex> lock(
+      const_cast<std::mutex&>(m_anomalyMutex));
+
+  std::vector<std::string> out;
+  out.reserve(m_anomalyLogCount);
+  // Oldest first. Once the ring has wrapped, the oldest entry is the one the
+  // head is about to overwrite.
+  const size_t start = (m_anomalyLogCount == kAnomalyLogSize)
+                           ? m_anomalyLogHead
+                           : 0;
+  for (size_t i = 0; i < m_anomalyLogCount; ++i) {
+    const AnomalyLogEntry& e =
+        m_anomalyLog[(start + i) % kAnomalyLogSize];
+    out.emplace_back(std::to_string(e.wallMs) + " " + e.text);
+  }
+  return out;
 }
 
 int64_t RS485Comm::SwitchReplyWindowUs() const {

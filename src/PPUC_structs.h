@@ -8,6 +8,7 @@
 
 #include <inttypes.h>
 #include <string>
+#include <vector>
 
 typedef void(CALLBACK* PPUC_LogMessageCallback)(const char* format,
                                                 va_list args,

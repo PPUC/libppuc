@@ -122,6 +122,7 @@ class RS485Comm {
   PPUCSwitchState* GetNextSwitchState();
   uint32_t GetCleanSwitchReplyChainCount() const;
   PPUCBusHealth GetBusHealth() const;
+  std::vector<std::string> GetRecentAnomalies() const;
   bool IsBoardActive(uint8_t number) const;
   bool SetVirtualSwitchState(uint16_t number, uint8_t state);
   bool IsSwitchVirtualized(uint16_t number) const;
@@ -236,11 +237,30 @@ class RS485Comm {
 
   struct AnomalyState {
     std::atomic<uint32_t> total{0};        // lifetime occurrences
-    uint32_t suppressed = 0;               // since the last line printed
-    std::chrono::steady_clock::time_point lastPrint{};
-    bool everPrinted = false;
+    uint32_t suppressed = 0;               // since the last line recorded
+    std::chrono::steady_clock::time_point lastRecord{};
+    bool everRecorded = false;
+  };
+
+  // The most recent anomalies, kept in RAM.
+  //
+  // ppuc-pinmame runs on a Raspberry Pi with a read-only root and no console -
+  // an attached monitor is showing the game, not a terminal - so there is
+  // nowhere to write a log and nobody to read stdout. Printing by default
+  // would be work done on the bus thread for an audience of nobody.
+  //
+  // Recording costs a memcpy into a fixed ring, needs no filesystem, and means
+  // an intermittent fault during an event leaves something to find afterwards
+  // over ssh instead of having to be reproduced.
+  static constexpr size_t kAnomalyLogSize = 32;
+  struct AnomalyLogEntry {
+    char text[176] = {0};
+    int64_t wallMs = 0;
   };
   AnomalyState m_anomalies[static_cast<size_t>(Anomaly::Count)];
+  AnomalyLogEntry m_anomalyLog[kAnomalyLogSize];
+  size_t m_anomalyLogHead = 0;   // next slot to write
+  size_t m_anomalyLogCount = 0;  // entries held, saturates at kAnomalyLogSize
   // Config frames are written from the startup thread while the bus thread is
   // writing too, so both can report. Guards the non-atomic members above.
   std::mutex m_anomalyMutex;

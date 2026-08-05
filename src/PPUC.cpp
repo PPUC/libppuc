@@ -1944,6 +1944,10 @@ PPUCSwitchState* PPUC::GetNextSwitchState() {
 
 PPUCBusHealth PPUC::GetBusHealth() { return m_pRS485Comm->GetBusHealth(); }
 
+std::vector<std::string> PPUC::GetRecentAnomalies() {
+  return m_pRS485Comm->GetRecentAnomalies();
+}
+
 uint32_t PPUC::GetCleanSwitchReplyChainCount() {
   return m_pRS485Comm->GetCleanSwitchReplyChainCount();
 }
