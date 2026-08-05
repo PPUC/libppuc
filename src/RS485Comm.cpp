@@ -1572,6 +1572,163 @@ PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
   return result;
 }
 
+bool RS485Comm::AwaitAdminReply(uint8_t board, uint8_t expectedCommand,
+                                uint8_t* status, uint32_t* offset,
+                                uint32_t timeoutMs) {
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(timeoutMs);
+  uint8_t frame[ppuc::v2::kUpdateAckFrameBytes];
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    uint8_t byte = 0;
+    if (sp_blocking_read(m_pSerialPort, &byte, 1, 5) <= 0) {
+      continue;
+    }
+    if (byte != ppuc::v2::kSyncByte) {
+      continue;
+    }
+    frame[0] = byte;
+
+    size_t got = 1;
+    bool complete = true;
+    while (got < sizeof(frame)) {
+      const int read =
+          sp_blocking_read(m_pSerialPort, &frame[got], sizeof(frame) - got, 5);
+      if (read <= 0) {
+        complete = false;
+        break;
+      }
+      got += static_cast<size_t>(read);
+    }
+    if (!complete || ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin) {
+      continue;
+    }
+    if (!ppuc::v2::VerifyCrc(frame, sizeof(frame))) {
+      ReportAnomaly(Anomaly::FrameCrc, "Invalid admin ack CRC from board %u",
+                    board);
+      continue;
+    }
+
+    const uint8_t* payload = &frame[ppuc::v2::kHeaderBytes];
+    if (payload[0] != expectedCommand || payload[1] != board) {
+      continue;
+    }
+    ppuc::v2::ReadUpdateAck(payload, *status, *offset);
+    return true;
+  }
+  return false;
+}
+
+PPUCFirmwareUpdateResult RS485Comm::UpdateBoardFirmware(
+    uint8_t board, const uint8_t* image, size_t imageBytes,
+    PPUC_FirmwareProgressCallback progress, void* progressUserData) {
+  PPUCFirmwareUpdateResult result;
+  result.board = board;
+
+  if (m_pSerialPort == NULL || image == nullptr || imageBytes == 0) {
+    result.error = "no image or no serial port";
+    return result;
+  }
+
+  // The runtime loop must not be sending output frames into the middle of a
+  // transfer. Callers stop updates first; this is the check that says so.
+  if (m_runtimeEnabled) {
+    result.error = "runtime updates are still running";
+    return result;
+  }
+
+  const uint16_t imageCrc = ppuc::v2::Crc16Ccitt(image, imageBytes);
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+
+  uint8_t begin[ppuc::v2::kUpdateBeginFrameBytes];
+  ppuc::v2::BuildUpdateBeginFrame(begin, board, m_sequence++, m_epoch,
+                                  static_cast<uint32_t>(imageBytes), imageCrc);
+  if (!WriteBytes("UpdateBegin", begin, sizeof(begin))) {
+    result.error = "could not send UpdateBegin";
+    return result;
+  }
+
+  uint8_t status = 0;
+  uint32_t offset = 0;
+  if (!AwaitAdminReply(board, ppuc::v2::kAdminUpdateBeginAck, &status, &offset,
+                       2000)) {
+    result.error = "board did not acknowledge UpdateBegin";
+    return result;
+  }
+  if (status != ppuc::v2::kUpdateOk) {
+    result.status = status;
+    result.error = "board refused the update";
+    return result;
+  }
+
+  std::vector<uint8_t> chunk(ppuc::v2::kUpdateChunkMaxFrameBytes);
+  size_t sent = 0;
+  while (sent < imageBytes) {
+    const uint16_t length = static_cast<uint16_t>(
+        std::min<size_t>(ppuc::v2::kAdminChunkBytes, imageBytes - sent));
+    const size_t frameBytes = ppuc::v2::BuildUpdateChunkFrame(
+        chunk.data(), board, m_sequence++, m_epoch,
+        static_cast<uint32_t>(sent), image + sent, length);
+
+    bool acked = false;
+    // A retry is worth having: a chunk lost to a transient is otherwise a
+    // failed update, and the board rejects anything out of order anyway.
+    for (int attempt = 0; attempt < 3 && !acked; ++attempt) {
+      if (!WriteBytes("UpdateChunk", chunk.data(), frameBytes)) {
+        result.error = "could not send a chunk";
+        result.bytesSent = sent;
+        return result;
+      }
+      if (AwaitAdminReply(board, ppuc::v2::kAdminUpdateChunkAck, &status,
+                          &offset, 1000)) {
+        if (status == ppuc::v2::kUpdateOk && offset == sent) {
+          acked = true;
+        } else if (status != ppuc::v2::kUpdateOk) {
+          result.status = status;
+          result.error = "board rejected a chunk";
+          result.bytesSent = sent;
+          return result;
+        }
+      }
+    }
+    if (!acked) {
+      result.error = "chunk was not acknowledged after 3 attempts";
+      result.bytesSent = sent;
+      return result;
+    }
+
+    sent += length;
+    if (progress) {
+      progress(board, sent, imageBytes, progressUserData);
+    }
+  }
+
+  uint8_t commit[ppuc::v2::kUpdateCommitFrameBytes];
+  ppuc::v2::BuildUpdateCommitFrame(commit, board, m_sequence++, m_epoch);
+  if (!WriteBytes("UpdateCommit", commit, sizeof(commit))) {
+    result.error = "could not send UpdateCommit";
+    result.bytesSent = sent;
+    return result;
+  }
+
+  // The board verifies the staged image before it writes anything, so this
+  // wait covers a flash erase as well as the check.
+  if (!AwaitAdminReply(board, ppuc::v2::kAdminUpdateResult, &status, &offset,
+                       10000)) {
+    result.error = "board did not report an update result";
+    result.bytesSent = sent;
+    return result;
+  }
+
+  result.status = status;
+  result.bytesSent = sent;
+  result.ok = (status == ppuc::v2::kUpdateOk);
+  if (!result.ok) {
+    result.error = "board reported the update failed";
+  }
+  return result;
+}
+
 bool RS485Comm::SendSwitchRefreshFrame(uint8_t nextBoard) {
   if (m_pSerialPort == NULL ||
       !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig) ||

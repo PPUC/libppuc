@@ -89,6 +89,13 @@ class PPUCAPI PPUC {
   // than omitted, so a missing board is visible instead of silently absent.
   std::vector<PPUCBoardVersion> QueryBoardVersions();
 
+  // Sends a firmware image to one board. Call StopUpdates() first: the runtime
+  // loop must not be transmitting into the middle of a transfer.
+  PPUCFirmwareUpdateResult UpdateBoardFirmware(
+      uint8_t board, const uint8_t* image, size_t imageBytes,
+      PPUC_FirmwareProgressCallback progress = nullptr,
+      void* progressUserData = nullptr);
+
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
   uint8_t GetPlatform() { return m_platform; };

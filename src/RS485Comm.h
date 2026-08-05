@@ -127,6 +127,23 @@ class RS485Comm {
   // broadcasting: administration happens outside the switch chain, so nothing
   // arbitrates who replies.
   PPUCBoardVersion QueryBoardVersion(uint8_t board, uint32_t timeoutMs = 250);
+
+  // Sends a firmware image to one board and asks it to install.
+  //
+  // Synchronous and chunk-at-a-time: every chunk is acknowledged before the
+  // next is sent. Slower than streaming, but a board that falls behind stops
+  // the transfer instead of silently losing the middle of its own firmware.
+  PPUCFirmwareUpdateResult UpdateBoardFirmware(
+      uint8_t board, const uint8_t* image, size_t imageBytes,
+      PPUC_FirmwareProgressCallback progress, void* progressUserData);
+
+ private:
+  // Waits for one admin reply with the given command. Returns false on
+  // timeout or if the board reports a different command.
+  bool AwaitAdminReply(uint8_t board, uint8_t expectedCommand, uint8_t* status,
+                       uint32_t* offset, uint32_t timeoutMs);
+
+ public:
   std::vector<std::string> GetRecentAnomalies() const;
   bool IsBoardActive(uint8_t number) const;
   bool SetVirtualSwitchState(uint16_t number, uint8_t state);

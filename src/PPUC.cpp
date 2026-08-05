@@ -1948,6 +1948,13 @@ std::vector<std::string> PPUC::GetRecentAnomalies() {
   return m_pRS485Comm->GetRecentAnomalies();
 }
 
+PPUCFirmwareUpdateResult PPUC::UpdateBoardFirmware(
+    uint8_t board, const uint8_t* image, size_t imageBytes,
+    PPUC_FirmwareProgressCallback progress, void* progressUserData) {
+  return m_pRS485Comm->UpdateBoardFirmware(board, image, imageBytes, progress,
+                                           progressUserData);
+}
+
 std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions() {
   std::vector<PPUCBoardVersion> versions;
 

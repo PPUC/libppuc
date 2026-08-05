@@ -77,6 +77,20 @@ struct PPUCLamp {
 //
 // Raw counts only, no derived rates - there is nothing here to get wrong, and
 // whoever reads them can divide.
+// Progress during a firmware transfer, so a long operation is not silent.
+typedef void (*PPUC_FirmwareProgressCallback)(uint8_t board, size_t sentBytes,
+                                              size_t totalBytes,
+                                              void* userData);
+
+// Outcome of a firmware update attempt.
+struct PPUCFirmwareUpdateResult {
+  bool ok = false;
+  uint8_t board = 0;
+  uint8_t status = 0;       // AdminUpdateStatus from the board, when it spoke
+  size_t bytesSent = 0;
+  std::string error;        // why it stopped, when !ok
+};
+
 // What a board reports about itself when asked, before any session exists.
 struct PPUCBoardVersion {
   uint8_t board = 0;
