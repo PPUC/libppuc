@@ -105,6 +105,11 @@ struct PPUCBoardVersion {
   // sent to a board whose type it was built for.
   uint8_t boardType = 0;
 
+  // Which build, as opposed to which version. Zero means the board did not
+  // record one - a local build - and must not be treated as a build that
+  // differs from every other.
+  uint32_t buildId = 0;
+
   std::string FirmwareVersion() const {
     return std::to_string(firmwareMajor) + "." + std::to_string(firmwareMinor) +
            "." + std::to_string(firmwarePatch);

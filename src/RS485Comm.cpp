@@ -1567,6 +1567,7 @@ PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
     result.adminProtocolMinor = data[ppuc::v2::kAdminVersionProtocolMinor];
     result.capabilities = data[ppuc::v2::kAdminVersionCapabilities];
     result.boardType = data[ppuc::v2::kAdminVersionBoardType];
+    result.buildId = ppuc::v2::ReadU32(&data[ppuc::v2::kAdminVersionBuildId]);
     return result;
   }
 
