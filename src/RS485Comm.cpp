@@ -970,6 +970,17 @@ uint32_t RS485Comm::GetCleanSwitchReplyChainCount() const {
   return m_cleanSwitchReplyChainCount.load();
 }
 
+PPUCBusHealth RS485Comm::GetBusHealth() const {
+  PPUCBusHealth health;
+  health.switchReplyChains = m_switchReplyChainCount.load();
+  health.switchReplyChainsClean = m_cleanSwitchReplyChainCount.load();
+  health.switchReplyMisses = m_switchReplyMissCount.load();
+  health.sessionResyncs = m_sessionResyncCount.load();
+  health.configAckRetries = m_configAckRetryCount.load();
+  health.configAckTimeouts = m_configAckTimeoutCount.load();
+  return health;
+}
+
 bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
   if (m_pSerialPort == NULL || !event) {
     delete event;
@@ -1000,6 +1011,10 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
   delete event;
 
   for (uint8_t attempt = 0; attempt < RS485_COMM_CONFIG_ACK_RETRIES; ++attempt) {
+    if (attempt > 0) {
+      // A repeat of a config frame the board never acknowledged.
+      ++m_configAckRetryCount;
+    }
     if (!WriteBytes("ConfigFrame", buffer, sizeof(buffer))) {
       return false;
     }
@@ -1178,6 +1193,8 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
     return true;
   }
 
+  // Every attempt spent without an acknowledgement.
+  ++m_configAckTimeoutCount;
   return false;
 }
 
@@ -1228,16 +1245,19 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
     expected = next;
   }
 
+  ++m_switchReplyChainCount;
   if (success) {
     m_switchReplyMisses = 0;
     ++m_cleanSwitchReplyChainCount;
   } else {
     ++m_switchReplyMisses;
+    ++m_switchReplyMissCount;
     if (m_debug || m_debugErrors) {
       ErrorPrintf("Missed V2 switch reply chain %u time(s)",
                   m_switchReplyMisses);
     }
     if (m_switchReplyMisses >= RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD) {
+      ++m_sessionResyncCount;
       m_needSessionResync = true;
     }
   }

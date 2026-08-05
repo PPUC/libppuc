@@ -1942,6 +1942,8 @@ PPUCSwitchState* PPUC::GetNextSwitchState() {
   return m_pRS485Comm->GetNextSwitchState();
 }
 
+PPUCBusHealth PPUC::GetBusHealth() { return m_pRS485Comm->GetBusHealth(); }
+
 uint32_t PPUC::GetCleanSwitchReplyChainCount() {
   return m_pRS485Comm->GetCleanSwitchReplyChainCount();
 }

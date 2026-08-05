@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PPUC_structs.h"
+
 #include <inttypes.h>
 #include <stdarg.h>
 
@@ -105,6 +107,7 @@ class RS485Comm {
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
   uint32_t GetCleanSwitchReplyChainCount() const;
+  PPUCBusHealth GetBusHealth() const;
   bool IsBoardActive(uint8_t number) const;
   bool SetVirtualSwitchState(uint16_t number, uint8_t state);
   bool IsSwitchVirtualized(uint16_t number) const;
@@ -213,6 +216,14 @@ class RS485Comm {
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};
   std::atomic<uint32_t> m_cleanSwitchReplyChainCount{0};
+  // Lifetime tallies behind PPUCBusHealth. Separate from the consecutive
+  // streaks above, which reset on every success and so cannot show an
+  // intermittent fault.
+  std::atomic<uint32_t> m_switchReplyChainCount{0};
+  std::atomic<uint32_t> m_switchReplyMissCount{0};
+  std::atomic<uint32_t> m_sessionResyncCount{0};
+  std::atomic<uint32_t> m_configAckRetryCount{0};
+  std::atomic<uint32_t> m_configAckTimeoutCount{0};
   bool m_configFailed = false;
   bool m_configEarlyAbortLogged = false;
   uint8_t m_initialConfigAckMissStreak = 0;

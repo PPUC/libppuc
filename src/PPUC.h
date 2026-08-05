@@ -34,6 +34,7 @@ struct PPUCCoilGiMapping {
   uint8_t offBrightness = 0;
 };
 
+
 class PPUCAPI PPUC {
  public:
   PPUC();
@@ -71,6 +72,9 @@ class PPUCAPI PPUC {
   bool IsBoardVirtualized(uint8_t board);
   PPUCSwitchState* GetNextSwitchState();
   uint32_t GetCleanSwitchReplyChainCount();
+
+  // Bus recovery counters since startup. See PPUCBusHealth.
+  PPUCBusHealth GetBusHealth();
 
   uint8_t GetCoinDoorClosedSwitch() { return m_coinDoorClosedSwitch; };
   uint8_t GetGameOnSolenoid() { return m_gameOnSolenoid; };
