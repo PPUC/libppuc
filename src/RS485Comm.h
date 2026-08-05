@@ -70,6 +70,20 @@ class RS485Comm {
   RS485Comm();
   ~RS485Comm();
 
+  // Classes of unexpected condition, each rate limited independently so one
+  // noisy fault cannot bury the others.
+  enum class Anomaly : uint8_t {
+    SerialWrite,       // the port rejected or truncated a write
+    FrameCrc,          // a frame arrived corrupt
+    ConfigAck,         // a config frame was unacknowledged, late or unexpected
+    SwitchChainMiss,   // a switch reply chain did not complete
+    EpochMismatch,     // a board is answering for a previous session
+    BoardStatus,       // a board reported a status flag worth knowing about
+    QueueOverflow,     // host-side output snapshots were dropped
+    SessionResync,     // the host restarted the session
+    Count
+  };
+
   void SetLogMessageCallback(PPUC_LogMessageCallback callback,
                              const void* userData);
 
@@ -152,7 +166,6 @@ class RS485Comm {
   void QueueOutputSnapshotLocked();
   bool SendOutputsOffFrame();
   void DebugPrintf(const char* format, ...);
-  void ErrorPrintf(const char* format, ...);
   int64_t SwitchReplyWindowUs() const;
   uint32_t SwitchReadTimeoutMs() const;
 
@@ -215,6 +228,23 @@ class RS485Comm {
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};
+  // Reports an unexpected condition. Always emitted, never behind a debug
+  // flag: a fault that only shows up when tracing is enabled is a fault
+  // nobody sees in the field, and enabling tracing changes the timing being
+  // diagnosed. Rate limited per kind - see the implementation.
+  void ReportAnomaly(Anomaly kind, const char* format, ...);
+
+  struct AnomalyState {
+    std::atomic<uint32_t> total{0};        // lifetime occurrences
+    uint32_t suppressed = 0;               // since the last line printed
+    std::chrono::steady_clock::time_point lastPrint{};
+    bool everPrinted = false;
+  };
+  AnomalyState m_anomalies[static_cast<size_t>(Anomaly::Count)];
+  // Config frames are written from the startup thread while the bus thread is
+  // writing too, so both can report. Guards the non-atomic members above.
+  std::mutex m_anomalyMutex;
+
   std::atomic<uint32_t> m_cleanSwitchReplyChainCount{0};
   // Lifetime tallies behind PPUCBusHealth. Separate from the consecutive
   // streaks above, which reset on every success and so cannot show an

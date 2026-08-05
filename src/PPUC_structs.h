@@ -87,4 +87,8 @@ struct PPUCBusHealth {
   // Board configuration, which happens at startup and after a resync.
   uint32_t configAckRetries = 0;   // config frames that needed repeating
   uint32_t configAckTimeouts = 0;  // config frames never acknowledged
+
+  // Transport faults, counted wherever they are reported.
+  uint32_t serialWriteFailures = 0;  // the port rejected or truncated a write
+  uint32_t frameCrcErrors = 0;       // a frame arrived corrupt
 };

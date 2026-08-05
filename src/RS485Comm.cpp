@@ -190,8 +190,29 @@ void RS485Comm::DebugPrintf(const char* format, ...) {
   }
 }
 
-void RS485Comm::ErrorPrintf(const char* format, ...) {
-  if (!(m_debug || m_debugErrors)) {
+void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
+  // Always reported. These are conditions that should not happen, and one that
+  // is only visible with tracing switched on is one nobody sees on a machine at
+  // an event - where enabling tracing would also perturb the timing being
+  // diagnosed.
+  //
+  // Rate limited per kind rather than silenced: a broken bus can raise the same
+  // fault every cycle, and printf on this thread is slow enough that flooding
+  // would itself delay the loop. The first occurrence prints immediately, so
+  // nothing is ever missed entirely; repeats are counted and folded into a
+  // periodic line, so the volume stays bounded no matter how bad it gets.
+  static constexpr auto kRepeatInterval = std::chrono::seconds(5);
+
+  AnomalyState& state = m_anomalies[static_cast<size_t>(kind)];
+  ++state.total;
+
+  // Held across the print as well: the rate limiter is what keeps this cheap,
+  // so contention is at most one thread per kind per interval.
+  std::lock_guard<std::mutex> lock(m_anomalyMutex);
+
+  const auto now = std::chrono::steady_clock::now();
+  if (state.everPrinted && (now - state.lastPrint) < kRepeatInterval) {
+    ++state.suppressed;
     return;
   }
 
@@ -201,13 +222,24 @@ void RS485Comm::ErrorPrintf(const char* format, ...) {
   vsnprintf(buffer, sizeof(buffer), format, args);
   va_end(args);
 
-  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
-  printf("%lld ERROR: %s", static_cast<long long>(now), buffer);
-  if (buffer[0] == '\0' || buffer[strlen(buffer) - 1] != '\n') {
-    printf("\n");
+  const auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+
+  char repeats[96] = {0};
+  if (state.suppressed > 0) {
+    snprintf(repeats, sizeof(repeats), " (+%u more in the last %llds)",
+             state.suppressed,
+             static_cast<long long>(kRepeatInterval.count()));
   }
+
+  printf("%lld PPUC ERROR: %s%s\n", static_cast<long long>(wallMs), buffer,
+         repeats);
+  fflush(stdout);
+
+  state.suppressed = 0;
+  state.lastPrint = now;
+  state.everPrinted = true;
 }
 
 int64_t RS485Comm::SwitchReplyWindowUs() const {
@@ -244,20 +276,21 @@ bool RS485Comm::WriteBytes(const char* context, const uint8_t* buffer,
     return true;
   }
 
-  if (m_debug || m_debugErrors) {
-    if (written < 0) {
-      char* errorMessage = sp_last_error_message();
-      if (errorMessage) {
-        ErrorPrintf("Serial write failed for %s: %s", context, errorMessage);
-        sp_free_error_message(errorMessage);
-      } else {
-        ErrorPrintf("Serial write failed for %s: libserialport error %d",
-                    context, written);
-      }
+  if (written < 0) {
+    char* errorMessage = sp_last_error_message();
+    if (errorMessage) {
+      ReportAnomaly(Anomaly::SerialWrite, "Serial write failed for %s: %s",
+                    context, errorMessage);
+      sp_free_error_message(errorMessage);
     } else {
-      ErrorPrintf("Serial write incomplete for %s: wrote %d of %zu bytes",
-                  context, written, size);
+      ReportAnomaly(Anomaly::SerialWrite,
+                    "Serial write failed for %s: libserialport error %d",
+                    context, written);
     }
+  } else {
+    ReportAnomaly(Anomaly::SerialWrite,
+                  "Serial write incomplete for %s: wrote %d of %zu bytes",
+                  context, written, size);
   }
 
   return false;
@@ -498,9 +531,8 @@ void RS485Comm::ConsumeCoilHoldoverLocked(const uint8_t* holdFrames) {
 void RS485Comm::QueueOutputSnapshotLocked() {
   std::lock_guard<std::mutex> queueLock(m_outputQueueMutex);
   if (m_outputSnapshots.size() >= RS485_COMM_OUTPUT_QUEUE_SIZE_MAX) {
-    if (m_debug || m_debugErrors) {
-      ErrorPrintf("Dropping oldest queued output snapshot: queue_full");
-    }
+    ReportAnomaly(Anomaly::QueueOverflow,
+                  "Dropping oldest queued output snapshot: queue_full");
     m_outputSnapshots.pop();
   }
 
@@ -978,6 +1010,10 @@ PPUCBusHealth RS485Comm::GetBusHealth() const {
   health.sessionResyncs = m_sessionResyncCount.load();
   health.configAckRetries = m_configAckRetryCount.load();
   health.configAckTimeouts = m_configAckTimeoutCount.load();
+  health.serialWriteFailures =
+      m_anomalies[static_cast<size_t>(Anomaly::SerialWrite)].total.load();
+  health.frameCrcErrors =
+      m_anomalies[static_cast<size_t>(Anomaly::FrameCrc)].total.load();
   return health;
 }
 
@@ -1042,7 +1078,7 @@ bool RS485Comm::SendConfigEvent(ConfigEvent* event) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 
-  ErrorPrintf("Missing V2 config ack: board=%u topic=%u index=%u key=%u",
+  ReportAnomaly(Anomaly::ConfigAck, "Missing V2 config ack: board=%u topic=%u index=%u key=%u",
               buffer[5], buffer[6], buffer[7], buffer[8]);
   m_configFailed = true;
   if (m_presentBoards.empty() &&
@@ -1171,20 +1207,20 @@ bool RS485Comm::ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
     const uint16_t calculatedCrc = ppuc::v2::Crc16Ccitt(
         buffer, ppuc::v2::kHeaderBytes + ppuc::v2::kConfigAckPayloadBytes);
     if (receivedCrc != calculatedCrc) {
-      ErrorPrintf("Invalid V2 config ack CRC: got=%04X expected=%04X",
+      ReportAnomaly(Anomaly::FrameCrc, "Invalid V2 config ack CRC: got=%04X expected=%04X",
                   receivedCrc, calculatedCrc);
       continue;
     }
 
     if (buffer[5] != boardId || buffer[6] != topic || buffer[7] != index ||
         buffer[8] != key) {
-      ErrorPrintf("Unexpected V2 config ack: board=%u topic=%u index=%u key=%u",
+      ReportAnomaly(Anomaly::ConfigAck, "Unexpected V2 config ack: board=%u topic=%u index=%u key=%u",
                   buffer[5], buffer[6], buffer[7], buffer[8]);
       continue;
     }
 
     if (buffer[9] != ppuc::v2::kConfigAckAccepted) {
-      ErrorPrintf(
+      ReportAnomaly(Anomaly::ConfigAck,
           "Rejected V2 config ack: board=%u topic=%u index=%u key=%u status=%u",
           boardId, topic, index, key, buffer[9]);
       return false;
@@ -1252,10 +1288,8 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
   } else {
     ++m_switchReplyMisses;
     ++m_switchReplyMissCount;
-    if (m_debug || m_debugErrors) {
-      ErrorPrintf("Missed V2 switch reply chain %u time(s)",
-                  m_switchReplyMisses);
-    }
+    ReportAnomaly(Anomaly::SwitchChainMiss,
+                  "Missed V2 switch reply chain %u time(s)", m_switchReplyMisses);
     if (m_switchReplyMisses >= RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD) {
       ++m_sessionResyncCount;
       m_needSessionResync = true;
@@ -1337,9 +1371,8 @@ bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
 
 bool RS485Comm::ResyncSession() {
   ++m_epoch;
-  if (m_debug || m_debugErrors) {
-    ErrorPrintf("Starting V2 session resync epoch=%u", m_epoch);
-  }
+  ReportAnomaly(Anomaly::SessionResync, "Starting V2 session resync epoch=%u",
+                m_epoch);
   if (!SendSetupFrame()) {
     return false;
   }
@@ -1664,12 +1697,12 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
         (statusFlags & ppuc::v2::kStatusSwitchOverflow) != 0;
 
     if (epochSeen != m_epoch) {
-      ErrorPrintf("V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
+      ReportAnomaly(Anomaly::EpochMismatch, "V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
                   expectedBoard, epochSeen, m_epoch);
       m_needSessionResync = true;
     }
     if (lastHostSequenceSeen != m_lastOutputSequenceSent) {
-      ErrorPrintf(
+      ReportAnomaly(Anomaly::EpochMismatch,
           "V2 switch reply sequence mismatch: board=%u seen=%u expected=%u",
           expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
       m_needSessionResync = true;
@@ -1677,13 +1710,13 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     if ((statusFlags & (ppuc::v2::kStatusNeedsSetup |
                         ppuc::v2::kStatusMappingIncomplete |
                         ppuc::v2::kStatusSequenceGap)) != 0) {
-      ErrorPrintf("V2 switch reply requested resync: board=%u flags=0x%02X",
+      ReportAnomaly(Anomaly::BoardStatus, "V2 switch reply requested resync: board=%u flags=0x%02X",
                   expectedBoard, statusFlags);
       m_needSessionResync = true;
     }
 
     if (parserResynced || switchOverflow) {
-      ErrorPrintf("V2 switch reply status flags: board=%u flags=0x%02X%s%s",
+      ReportAnomaly(Anomaly::BoardStatus, "V2 switch reply status flags: board=%u flags=0x%02X%s%s",
                   expectedBoard, statusFlags,
                   parserResynced ? " parser-resynced" : "",
                   switchOverflow ? " switch-overflow" : "");
@@ -1697,7 +1730,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     const uint16_t calculatedCrc =
         ppuc::v2::Crc16Ccitt(buffer, frameBytes - ppuc::v2::kCrcBytes);
     if (receivedCrc != calculatedCrc) {
-      ErrorPrintf("Invalid V2 switch frame CRC: got=%04X expected=%04X",
+      ReportAnomaly(Anomaly::FrameCrc, "Invalid V2 switch frame CRC: got=%04X expected=%04X",
                   receivedCrc, calculatedCrc);
       return false;
     }
@@ -1715,15 +1748,13 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     return true;
   }
 
-  if (m_debug || m_debugErrors) {
-    ErrorPrintf(
-        "Timed out waiting for V2 switch reply for board token %u (windowUs=%lld readTimeoutMs=%u sawBytes=%s inputWaiting=%d lastOutputSeq=%u epoch=%u)",
-        expectedBoard, static_cast<long long>(switchReplyWindowUs),
-        static_cast<unsigned>(readTimeoutMs), sawAnyReplyBytes ? "yes" : "no",
-        static_cast<int>(sp_input_waiting(m_pSerialPort)),
-        static_cast<unsigned>(m_lastOutputSequenceSent),
-        static_cast<unsigned>(m_epoch));
-  }
+  ReportAnomaly(Anomaly::SwitchChainMiss,
+      "Timed out waiting for V2 switch reply for board token %u (windowUs=%lld readTimeoutMs=%u sawBytes=%s inputWaiting=%d lastOutputSeq=%u epoch=%u)",
+      expectedBoard, static_cast<long long>(switchReplyWindowUs),
+      static_cast<unsigned>(readTimeoutMs), sawAnyReplyBytes ? "yes" : "no",
+      static_cast<int>(sp_input_waiting(m_pSerialPort)),
+      static_cast<unsigned>(m_lastOutputSequenceSent),
+      static_cast<unsigned>(m_epoch));
   if (sp_input_waiting(m_pSerialPort) <= 0) {
     sp_flush(m_pSerialPort, SP_BUF_INPUT);
   }
