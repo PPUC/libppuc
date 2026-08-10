@@ -407,11 +407,18 @@ void RS485Comm::Run() {
       const auto now = std::chrono::steady_clock::now();
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
-        nextBoard = m_switchBoards[0];
+        nextBoard = m_switchBoards[SwitchChainEntryIndex(
+            m_slowSwitchBoardCount, m_switchBoardCounter,
+            m_slowSwitchPollDivider, m_switchPollCycle)];
       }
       const bool sendSwitchRefresh =
           nextBoard != ppuc::v2::kNoBoard && m_switchRefreshIdleMs > 0 &&
           now >= m_nextSwitchRefreshAt;
+      if (sendSwitchRefresh) {
+        // A refresh asks for full state from everyone, so it always starts at
+        // the front regardless of where this cycle would have begun.
+        nextBoard = m_switchBoards[0];
+      }
 
       QueuedOutputSnapshot snapshot;
       bool haveQueuedSnapshot = false;
@@ -461,6 +468,7 @@ void RS485Comm::Run() {
         ConsumeCoilHoldoverLocked(holdFrames);
       }
       if (nextBoard != ppuc::v2::kNoBoard) {
+        ++m_switchPollCycle;
         ReceiveSwitchStateChain(nextBoard);
         if (sendSwitchRefresh && m_switchRefreshIdleMs > 0) {
           m_nextSwitchRefreshAt =
@@ -932,7 +940,8 @@ std::vector<uint8_t> RS485Comm::GetMissingConfiguredBoards() const {
   return missingBoards;
 }
 
-void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
+void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards,
+                                      uint8_t slowPrefixCount) {
   m_switchBoardCounter = 0;
   for (const uint8_t board : boards) {
     if (m_switchBoardCounter >= RS485_COMM_MAX_BOARDS ||
@@ -941,6 +950,18 @@ void RS485Comm::SetActiveSwitchBoards(const std::vector<uint8_t>& boards) {
     }
     m_switchBoards[m_switchBoardCounter++] = board;
   }
+  // Clamp rather than trust: a prefix longer than the chain would leave the
+  // fast entry point past the end of the array.
+  m_slowSwitchBoardCount = slowPrefixCount > m_switchBoardCounter
+                               ? m_switchBoardCounter
+                               : slowPrefixCount;
+  m_switchPollCycle = 0;
+}
+
+void RS485Comm::SetSlowSwitchPollDivider(uint8_t divider) {
+  // 0 and 1 both mean "no skipping"; anything else would divide by zero or
+  // read as "skip every cycle".
+  m_slowSwitchPollDivider = divider < 1 ? 1 : divider;
 }
 
 void RS485Comm::RebuildSwitchOwnershipMasks() {
@@ -1316,6 +1337,29 @@ bool RS485Comm::SendSetupFrame() {
   }
 
   return false;
+}
+
+uint8_t RS485Comm::SwitchChainEntryIndex(uint8_t slowCount, uint8_t boardCount,
+                                         uint8_t divider, uint32_t cycle) {
+  // The chain is a linked list configured onto the boards, so entering it late
+  // is free: the boards ahead of the entry point simply are not addressed and
+  // stay silent. That only works for a prefix, which is why the slow boards are
+  // sorted to the front when the chain is built.
+  //
+  // Skipping is never lossy. A board queues a full switch snapshot per
+  // transition and a reply drains one, so a press that happens between two
+  // polls is delivered late rather than dropped - it is the reason this is
+  // worth doing at all.
+  if (slowCount == 0 || slowCount >= boardCount) {
+    // Nothing to skip, or nothing would be left to poll if we did. A machine
+    // whose only polled board is the slow one still gets polled every cycle;
+    // there is no latency to protect by skipping it.
+    return 0;
+  }
+  if (divider <= 1 || (cycle % divider) == 0) {
+    return 0;
+  }
+  return slowCount;
 }
 
 void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {

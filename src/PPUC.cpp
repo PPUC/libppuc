@@ -404,6 +404,7 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
     ValidateRequiredMap(board, path);
     ValidateRequiredField<uint8_t>(board, path, "number");
     ValidateRequiredField<bool>(board, path, "pollEvents");
+    ValidateOptionalField<bool>(board, path, "slowSwitches");
   }
 
   const YAML::Node switchMatrix = config["switchMatrix"];
@@ -1190,7 +1191,10 @@ bool PPUC::Connect() {
     };
 
     uint8_t index = 0;
+    // Kept apart while walking the config so the chain can be built with the
+    // slow boards in front - the poll loop can only skip a prefix.
     std::vector<uint8_t> switchBoards;
+    std::vector<uint8_t> slowSwitchBoards;
     std::set<uint16_t> coilNumbers;
     std::set<uint16_t> lampNumbers;
     std::set<uint16_t> switchNumbers;
@@ -1226,7 +1230,11 @@ bool PPUC::Connect() {
 
       if (n_board["pollEvents"].as<bool>()) {
         m_pRS485Comm->RegisterSwitchBoard(boardNumber);
-        switchBoards.push_back(boardNumber);
+        if (n_board["slowSwitches"] && n_board["slowSwitches"].as<bool>()) {
+          slowSwitchBoards.push_back(boardNumber);
+        } else {
+          switchBoards.push_back(boardNumber);
+        }
       }
 
       if (AbortConfigurationEarly()) {
@@ -1759,7 +1767,22 @@ bool PPUC::Connect() {
     }
 
     m_pRS485Comm->FinalizeConfiguredBoardPresence();
-    m_pRS485Comm->SetActiveSwitchBoards(switchBoards);
+
+    // Slow boards first. The token ring is a linked list configured onto the
+    // boards, so the host can enter it late but not skip a board in the
+    // middle; putting them at the front is what makes them skippable at all.
+    // Their order relative to each other, and the order of the rest, is left
+    // as configured.
+    const uint8_t slowSwitchBoardCount =
+        static_cast<uint8_t>(slowSwitchBoards.size());
+    slowSwitchBoards.insert(slowSwitchBoards.end(), switchBoards.begin(),
+                            switchBoards.end());
+    switchBoards.swap(slowSwitchBoards);
+    if (slowSwitchBoardCount > 0 && m_debug) {
+      printf("PPUC: %u of %u polled board(s) carry only slow switches\n",
+             (unsigned)slowSwitchBoardCount, (unsigned)switchBoards.size());
+    }
+    m_pRS485Comm->SetActiveSwitchBoards(switchBoards, slowSwitchBoardCount);
 
     // Configure token-ring handoff across the full logical switch-board
     // order, including virtualized boards. The host synthesizes replies for

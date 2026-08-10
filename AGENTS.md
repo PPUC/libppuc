@@ -87,6 +87,11 @@ Optional metadata parsed and exposed here:
 - `ballSearch: true` on PWM outputs/coils → `PPUCCoil::ballSearch`. `libppuc`
   does **not** fire ball-search coils itself; `../ppuc` decides.
 - `pollEvents: true` on boards → registers the board as switch-capable.
+- `slowSwitches: true` on boards → the board carries nothing latency-critical
+  (start button, coin door, tilt), so it is sorted to the front of the token
+  ring and polled on every eighth chain instead of every chain. Skipping is
+  lossless — boards queue a snapshot per transition — but slows how fast a
+  burst of changes drains.
 - `debounce` + `debounceMode` → `CONFIG_TOPIC_DEBOUNCE_TIME` /
   `CONFIG_TOPIC_MODE`.
 - `switchGroups` → named groups exposed to the Lua rules engine. The group

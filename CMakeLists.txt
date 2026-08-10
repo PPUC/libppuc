@@ -175,6 +175,7 @@ if(BUILD_TESTS)
       tests/ConfigFixture.h
       tests/test_config_validation.cpp
       tests/test_switch_groups.cpp
+      tests/test_switch_poll_priority.cpp
       tests/test_coil_gi_mappings.cpp
       tests/test_pwm_output.cpp
       tests/test_protocol_conformance.cpp

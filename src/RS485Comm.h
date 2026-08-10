@@ -48,6 +48,11 @@ static constexpr uint32_t RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS = 4;
 #define RS485_COMM_EFFECT_EVENT_SPACING_US 1000
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 3
 #define RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS 250
+// A board carrying only slow switches - start button, coin door, tilt - is
+// polled on every Nth chain instead of every chain. At the default 4 ms output
+// cadence that is roughly every 32 ms, far below what a hand can produce, and
+// it shortens every other cycle by that board's reply time.
+#define RS485_COMM_SLOW_SWITCH_POLL_DIVIDER 8
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
 #define RS485_COMM_CONFIG_ACK_RETRIES 3
 #define RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD 10
@@ -113,7 +118,19 @@ class RS485Comm {
   void FinalizeConfiguredBoardPresence();
   bool IsBoardPresent(uint8_t board) const;
   bool IsBoardVirtualized(uint8_t board) const;
-  void SetActiveSwitchBoards(const std::vector<uint8_t>& boards);
+  // `boards` is the token-ring order. The first `slowPrefixCount` entries are
+  // boards with no latency-critical switches; the poll loop skips that prefix
+  // on most cycles. See SetSlowSwitchPollDivider().
+  void SetActiveSwitchBoards(const std::vector<uint8_t>& boards,
+                             uint8_t slowPrefixCount = 0);
+  void SetSlowSwitchPollDivider(uint8_t divider);
+
+  // Where in the token ring this cycle starts: 0 for the whole chain, or
+  // `slowCount` to skip the slow prefix. Pure, and public, so the rule can be
+  // tested without a serial port - it decides how often a start button is
+  // looked at, which is not something to leave unverified.
+  static uint8_t SwitchChainEntryIndex(uint8_t slowCount, uint8_t boardCount,
+                                       uint8_t divider, uint32_t cycle);
   bool HadConfigurationFailure() const;
   bool ShouldAbortConfigurationEarly() const;
   std::vector<uint8_t> GetMissingConfiguredBoards() const;
@@ -198,6 +215,11 @@ class RS485Comm {
 
   uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
   uint8_t m_switchBoardCounter = 0;  // Number of registered switch boards.
+  // How many leading entries of m_switchBoards carry only slow switches, and
+  // how often the chain is nevertheless started at the front to include them.
+  uint8_t m_slowSwitchBoardCount = 0;
+  uint8_t m_slowSwitchPollDivider = RS485_COMM_SLOW_SWITCH_POLL_DIVIDER;
+  uint32_t m_switchPollCycle = 0;
   uint8_t m_switchBoardIndex = 0;
   std::vector<uint8_t> m_configuredBoards;
   std::set<uint8_t> m_presentBoards;
