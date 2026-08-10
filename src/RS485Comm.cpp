@@ -191,6 +191,25 @@ void RS485Comm::DebugPrintf(const char* format, ...) {
 }
 
 void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  ReportAnomalyV(kind, /*rateLimit*/ true, format, args);
+  va_end(args);
+}
+
+void RS485Comm::ReportAnomalyOnce(Anomaly kind, const char* format, ...) {
+  // For faults that are already deduplicated by something more specific than
+  // "same kind within five seconds" - see ReportUnmappedDevice, where the
+  // number is the diagnosis and the per-kind limiter would report one and
+  // swallow the rest.
+  va_list args;
+  va_start(args, format);
+  ReportAnomalyV(kind, /*rateLimit*/ false, format, args);
+  va_end(args);
+}
+
+void RS485Comm::ReportAnomalyV(Anomaly kind, bool rateLimit, const char* format,
+                               va_list args) {
   // Always *recorded*, printed only when someone is watching.
   //
   // ppuc-pinmame normally runs headless on a read-only Raspberry Pi: no
@@ -213,16 +232,14 @@ void RS485Comm::ReportAnomaly(Anomaly kind, const char* format, ...) {
   std::lock_guard<std::mutex> lock(m_anomalyMutex);
 
   const auto now = std::chrono::steady_clock::now();
-  if (state.everRecorded && (now - state.lastRecord) < kRepeatInterval) {
+  if (rateLimit && state.everRecorded &&
+      (now - state.lastRecord) < kRepeatInterval) {
     ++state.suppressed;
     return;
   }
 
   char buffer[1024];
-  va_list args;
-  va_start(args, format);
   vsnprintf(buffer, sizeof(buffer), format, args);
-  va_end(args);
 
   const auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
@@ -262,6 +279,7 @@ const char* AnomalyName(RS485Comm::Anomaly kind) {
     case RS485Comm::Anomaly::FrameCrc: return "frame CRC";
     case RS485Comm::Anomaly::ConfigAck: return "config ack";
     case RS485Comm::Anomaly::SwitchChainMiss: return "switch chain miss";
+    case RS485Comm::Anomaly::UnmappedDevice: return "unmapped device number";
     case RS485Comm::Anomaly::EpochMismatch: return "epoch mismatch";
     case RS485Comm::Anomaly::BoardStatus: return "board status";
     case RS485Comm::Anomaly::QueueOverflow: return "output queue overflow";
@@ -499,6 +517,8 @@ void RS485Comm::QueueEvent(Event* event) {
           m_coilHoldFrames[it->second] = m_coilHoldFrameCount;
         }
         QueueOutputSnapshotLocked();
+      } else {
+        ReportUnmappedDevice(DeviceDomain::Coil, event->eventId);
       }
       delete event;
       return;
@@ -510,6 +530,11 @@ void RS485Comm::QueueEvent(Event* event) {
         if (event->eventId >= 1 && event->eventId <= ppuc::v2::kGiStrings) {
           std::lock_guard<std::mutex> lock(m_stateMutex);
           m_giLevels[event->eventId - 1] = ppuc::v2::ClampGiLevel(event->value);
+        } else {
+          // GI strings are fixed at 1..kGiStrings, so this is out of range
+          // rather than unmapped, but it is the same class of mistake and the
+          // same silence without this.
+          ReportUnmappedDevice(DeviceDomain::GiString, event->eventId);
         }
         delete event;
         return;
@@ -520,6 +545,8 @@ void RS485Comm::QueueEvent(Event* event) {
           it->second < ppuc::v2::kMaxLampBits) {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         ppuc::v2::SetBitmapBit(m_lampBitmap, it->second, event->value != 0);
+      } else {
+        ReportUnmappedDevice(DeviceDomain::Lamp, event->eventId);
       }
       delete event;
       return;
@@ -1360,6 +1387,47 @@ uint8_t RS485Comm::SwitchChainEntryIndex(uint8_t slowCount, uint8_t boardCount,
     return 0;
   }
   return slowCount;
+}
+
+void RS485Comm::ReportUnmappedDevice(DeviceDomain domain, uint16_t number) {
+  // A number nothing maps is a configuration fault, not a bus fault: the game
+  // drives a device the YAML never assigned to a board, so the output is dead
+  // and nothing anywhere says so. It used to be dropped in silence, which
+  // makes a mistyped number in a config indistinguishable from a broken lamp.
+  //
+  // Reported per number rather than per kind, because which number it is *is*
+  // the diagnosis; the anomaly rate limiter would show one and hide the rest.
+  // Each is named once for the life of the session - the ROM will address it
+  // again on the very next frame.
+  {
+    std::lock_guard<std::mutex> lock(m_unmappedDeviceMutex);
+    const uint32_t key = (static_cast<uint32_t>(domain) << 16) |
+                         static_cast<uint32_t>(number);
+    if (m_reportedUnmappedDevices.count(key) > 0) {
+      return;
+    }
+    if (m_reportedUnmappedDevices.size() >= kMaxReportedUnmappedDevices) {
+      if (m_unmappedDeviceListFull) {
+        return;
+      }
+      m_unmappedDeviceListFull = true;
+      ReportAnomalyOnce(Anomaly::UnmappedDevice,
+                        "More than %zu unmapped device numbers; further ones "
+                        "are not reported. The configuration and the ROM "
+                        "disagree about far more than a typo.",
+                        kMaxReportedUnmappedDevices);
+      return;
+    }
+    m_reportedUnmappedDevices.insert(key);
+  }
+
+  const char* kind = domain == DeviceDomain::Coil   ? "coil"
+                     : domain == DeviceDomain::Lamp ? "lamp"
+                                                    : "GI string";
+  ReportAnomalyOnce(Anomaly::UnmappedDevice,
+                    "%s %u is not mapped to any board; it will never do "
+                    "anything. Check the number against the game configuration.",
+                    kind, static_cast<unsigned>(number));
 }
 
 void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {

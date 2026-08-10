@@ -86,6 +86,7 @@ class RS485Comm {
     BoardStatus,       // a board reported a status flag worth knowing about
     QueueOverflow,     // host-side output snapshots were dropped
     SessionResync,     // the host restarted the session
+    UnmappedDevice,    // an output was addressed that no board claims
     Count
   };
 
@@ -190,6 +191,9 @@ class RS485Comm {
                               bool* outHadState);
   uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
   void ReceiveSwitchStateChain(uint8_t firstBoard);
+  // Reports an output number the configuration does not map, once per number.
+  enum class DeviceDomain : uint8_t { Coil, Lamp, GiString };
+  void ReportUnmappedDevice(DeviceDomain domain, uint16_t number);
   void ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap, size_t bytes);
   void RebuildSwitchOwnershipMasks();
   void EnsureConfiguredBoardPresenceKnown();
@@ -212,6 +216,14 @@ class RS485Comm {
 
   PPUC_LogMessageCallback m_logMessageCallback = nullptr;
   const void* m_logMessageUserData = nullptr;
+
+  // Numbers already reported as unmapped, so a lamp the ROM drives every frame
+  // is named once rather than every frame. Capped: the set exists to diagnose a
+  // handful of mistyped numbers, not to absorb a runaway source.
+  static constexpr size_t kMaxReportedUnmappedDevices = 32;
+  std::set<uint32_t> m_reportedUnmappedDevices;
+  bool m_unmappedDeviceListFull = false;
+  std::mutex m_unmappedDeviceMutex;
 
   uint8_t m_switchBoards[RS485_COMM_MAX_BOARDS];
   uint8_t m_switchBoardCounter = 0;  // Number of registered switch boards.
@@ -279,6 +291,11 @@ class RS485Comm {
   // nobody sees in the field, and enabling tracing changes the timing being
   // diagnosed. Rate limited per kind - see the implementation.
   void ReportAnomaly(Anomaly kind, const char* format, ...);
+  // Bypasses the per-kind rate limiter, for callers that deduplicate more
+  // precisely themselves.
+  void ReportAnomalyOnce(Anomaly kind, const char* format, ...);
+  void ReportAnomalyV(Anomaly kind, bool rateLimit, const char* format,
+                      va_list args);
 
   struct AnomalyState {
     std::atomic<uint32_t> total{0};        // lifetime occurrences
