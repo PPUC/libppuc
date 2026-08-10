@@ -106,7 +106,9 @@ Optional metadata parsed and exposed here:
 config-tool export against the keys this validator names, in both directions. A
 key an export contains and the validator does not know is silently ignored -
 which is what a typo in a game YAML looks like today. CI runs it against the
-exports in `mkalkbrenner/ppuc_games`.
+exports in `mkalkbrenner/ppuc_games`. Pass `--new-export` when checking a single
+freshly created game: the "validated but never exported" direction asks whether
+*any* game uses a key, which one game cannot answer.
 
 **Schema validation must be kept in sync with every config feature.** Whenever a
 YAML section, field, accepted type, or optional key is added anywhere in the

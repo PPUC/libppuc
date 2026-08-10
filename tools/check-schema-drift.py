@@ -19,8 +19,13 @@ exported game and the keys out of the validator, and reports:
 It deliberately parses rather than executes: running the exporter needs a
 database, and this has to be cheap enough for CI.
 
+Both directions only make sense over every export there is. Checking one file
+asks "does any game use this key", and the answer for a single game is no for
+most of them. Pass --new-export to check just the first direction, which is what
+fits a game that was only just created.
+
 Usage:
-    check-schema-drift.py <exported-game.yml> [more.yml ...]
+    check-schema-drift.py [--new-export] <exported-game.yml> [more.yml ...]
 """
 
 import re
@@ -102,11 +107,14 @@ def export_keys(path: Path) -> set:
 
 
 def main(argv) -> int:
-    if len(argv) < 2:
+    args = argv[1:]
+    new_export = "--new-export" in args
+    args = [a for a in args if a != "--new-export"]
+    if not args:
         print(__doc__)
         return 2
 
-    exports = [Path(p) for p in argv[1:]]
+    exports = [Path(p) for p in args]
     for path in exports:
         if not path.is_file():
             print(f"error: {path} does not exist")
@@ -127,7 +135,7 @@ def main(argv) -> int:
             f"libppuc will ignore it silently."
         )
 
-    for key in sorted(validated - emitted):
+    for key in sorted(validated - emitted) if not new_export else []:
         if key in KNOWN_ABSENT:
             continue
         problems.append(
@@ -137,7 +145,8 @@ def main(argv) -> int:
         )
 
     print(f"validator knows {len(validated)} keys; "
-          f"exports contain {len(emitted)} across {len(exports)} file(s)")
+          f"exports contain {len(emitted)} across {len(exports)} file(s)"
+          + (" (checking exported keys only)" if new_export else ""))
 
     if problems:
         print("\nSchema drift between config-tool and libppuc:\n")
@@ -147,8 +156,11 @@ def main(argv) -> int:
               "tools/check-schema-drift.py.")
         return 1
 
-    print("No drift: every exported key is validated, and every validated key "
-          "is either exported or explained.")
+    if new_export:
+        print("No drift: every key in this export is one the validator knows.")
+    else:
+        print("No drift: every exported key is validated, and every validated "
+              "key is either exported or explained.")
     return 0
 
 
