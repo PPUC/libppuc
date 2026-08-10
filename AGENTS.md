@@ -97,6 +97,12 @@ Optional metadata parsed and exposed here:
 - `switchGroups` → named groups exposed to the Lua rules engine. The group
   `buttons` is built in from `button: true` switches and cannot be overridden.
 
+`tools/check-schema-drift.py <exported-game.yml>...` compares a real
+config-tool export against the keys this validator names, in both directions. A
+key an export contains and the validator does not know is silently ignored -
+which is what a typo in a game YAML looks like today. CI runs it against the
+exports in `mkalkbrenner/ppuc_games`.
+
 **Schema validation must be kept in sync with every config feature.** Whenever a
 YAML section, field, accepted type, or optional key is added anywhere in the
 stack, extend the validation pass so malformed files fail early with the

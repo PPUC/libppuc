@@ -65,6 +65,28 @@ jobs:
           cmake --build build-tests -- -j$(nproc)
           ctest --test-dir build-tests --output-on-failure
 
+  schema-drift:
+    name: Schema drift against real game exports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch exported games
+        # The exports are the ground truth for what config-tool produces, so
+        # they are read where they live rather than copied in here, where a
+        # copy would go stale exactly when it mattered. Public repository, no
+        # token needed.
+        run: |
+          git clone --depth 1 https://github.com/mkalkbrenner/ppuc_games.git ppuc_games
+      - name: Check for drift
+        run: |
+          EXPORTS=$(find ppuc_games -name '*.yml' -o -name '*.yaml' | sort)
+          if [ -z "${EXPORTS}" ]; then
+            echo "::error::no exported games found; the check would pass vacuously"
+            exit 1
+          fi
+          echo "${EXPORTS}"
+          python3 tools/check-schema-drift.py ${EXPORTS}
+
   build:
     name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
