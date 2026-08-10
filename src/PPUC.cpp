@@ -286,6 +286,58 @@ void ValidateOptionalSequence(const YAML::Node& node,
   }
 }
 
+// How many switches may stop one output.
+//
+// Two is what the hardware asks for and what the firmware stores: one
+// end-of-stroke contact on a flipper, one switch at each end of a motor's
+// travel. Rejecting a third here rather than letting the board silently drop
+// it - a stop switch nobody notices is missing is a stop that does not happen.
+constexpr size_t kMaxStopSwitchesPerOutput = 2;
+
+void ValidateStopSwitches(const YAML::Node& item, const std::string& itemPath) {
+  const YAML::Node& node = item["stopSwitches"];
+  if (!node) {
+    return;
+  }
+  if (node.IsMap() && node.size() == 0) {
+    return;
+  }
+  if (!node.IsSequence()) {
+    throw std::runtime_error("invalid YAML configuration: '" + itemPath +
+                             ".stopSwitches' must be a list of switch numbers at " +
+                             FormatYamlLocation(node.Mark()));
+  }
+  if (node.size() > kMaxStopSwitchesPerOutput) {
+    throw std::runtime_error(
+        "invalid YAML configuration: '" + itemPath + ".stopSwitches' has " +
+        std::to_string(node.size()) + " entries; at most " +
+        std::to_string(kMaxStopSwitchesPerOutput) +
+        " switches can stop one output at " + FormatYamlLocation(node.Mark()));
+  }
+  for (size_t i = 0; i < node.size(); ++i) {
+    try {
+      node[i].as<uint32_t>();
+    } catch (const YAML::Exception&) {
+      throw std::runtime_error(
+          "invalid YAML configuration: '" + itemPath + ".stopSwitches[" +
+          std::to_string(i) + "]' must be a switch number at " +
+          FormatYamlLocation(node[i].Mark()));
+    }
+  }
+}
+
+std::vector<uint32_t> ReadStopSwitches(const YAML::Node& item) {
+  std::vector<uint32_t> numbers;
+  const YAML::Node& node = item["stopSwitches"];
+  if (!node || !node.IsSequence()) {
+    return numbers;
+  }
+  for (size_t i = 0; i < node.size() && i < kMaxStopSwitchesPerOutput; ++i) {
+    numbers.push_back(node[i].as<uint32_t>());
+  }
+  return numbers;
+}
+
 bool HasSequenceItems(const YAML::Node& node) {
   return node && node.IsSequence();
 }
@@ -545,6 +597,11 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                           // no bound. See WarnAboutUnprotectedSolenoids below.
                           ValidateOptionalField<bool>(
                               item, itemPath, "holdWinding");
+                          // Switches that cut this output the moment they
+                          // close: a flipper's EOS, or the switch at each end
+                          // of a motor's travel. The opposite polarity to
+                          // fastFlipSwitch, which runs an output while closed.
+                          ValidateStopSwitches(item, itemPath);
                           ValidateOptionalItems(
                               item, "effects", itemPath,
                               [](const YAML::Node& effect,
@@ -1504,6 +1561,21 @@ bool PPUC::Connect() {
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
             n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
             index++, (uint8_t)CONFIG_TOPIC_FAST_SWITCH, fastSwitch));
+
+        // Before the type, always: the board registers the output when the
+        // type arrives, and anything sent afterwards lands on the next one.
+        const std::vector<uint32_t> stopSwitches =
+            ReadStopSwitches(n_pwmOutput);
+        for (size_t s = 0; s < kMaxStopSwitchesPerOutput; ++s) {
+          const uint32_t number = s < stopSwitches.size() ? stopSwitches[s] : 0;
+          m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+              n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
+              index++,
+              (uint8_t)(s == 0 ? CONFIG_TOPIC_STOP_SWITCH
+                               : CONFIG_TOPIC_STOP_SWITCH_2),
+              number));
+        }
+
         std::string c_type = n_pwmOutput["type"].as<std::string>();
         uint32_t type = ResolvePwmType(c_type);
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(

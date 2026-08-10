@@ -42,6 +42,7 @@ KNOWN_ABSENT = {
     "dualWinding": "optional; games must be re-exported since config-tool gained the field",
     "eosSwitch": "optional; same as dualWinding",
     "holdWinding": "optional; no game has a separately driven flipper pair yet",
+    "stopSwitches": "optional; no exported game has a flipper EOS or a motor yet",
     "slowSwitches": "optional; no game has marked a board yet",
     "options": "optional LED effect field",
     "fadeRate": "optional LED effect field",

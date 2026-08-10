@@ -269,6 +269,66 @@ TEST_CASE("a power winding still needs its own bound") {
         std::string::npos);
 }
 
+// --- stop switches -----------------------------------------------------------
+//
+// A switch that cuts an output when it closes, the opposite polarity to
+// fastFlipSwitch. A flipper's EOS, or the switch at each end of a motor's
+// travel. Two per output is what the firmware stores, so a third has to be
+// refused here rather than silently dropped on the board.
+
+TEST_CASE("stopSwitches is optional") {
+  CHECK(LoadAndCaptureError(WithPwm()).empty());
+}
+
+TEST_CASE("one stop switch is accepted") {
+  const auto yaml = UnprotectedCoil() + "    stopSwitches:\n      - 200\n";
+
+  CHECK(LoadAndCaptureError(yaml).empty());
+}
+
+TEST_CASE("two stop switches are accepted") {
+  // A motor has one at each end of its travel.
+  const auto yaml =
+      UnprotectedCoil() + "    stopSwitches:\n      - 76\n      - 77\n";
+
+  CHECK(LoadAndCaptureError(yaml).empty());
+}
+
+TEST_CASE("a third stop switch is refused rather than dropped") {
+  // The board stores two. A third that is quietly ignored is a stop that does
+  // not happen, and nothing would say so.
+  const auto yaml =
+      UnprotectedCoil() + "    stopSwitches:\n      - 76\n      - 77\n      - 78\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("stopSwitches") != std::string::npos);
+  CHECK(error.find("at most 2") != std::string::npos);
+}
+
+TEST_CASE("stopSwitches must be a list") {
+  const auto yaml = UnprotectedCoil() + "    stopSwitches: 76\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("stopSwitches") != std::string::npos);
+}
+
+TEST_CASE("a stop switch must be a number") {
+  const auto yaml = UnprotectedCoil() + "    stopSwitches:\n      - left\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("stopSwitches[0]") != std::string::npos);
+}
+
+TEST_CASE("a stop switch does not count as thermal protection") {
+  // Deliberate. A stop switch is a mechanism that can fail - unplugged,
+  // misadjusted, or the assembly never reaching it - and WPC itself paired one
+  // with a timeout rather than trusting it alone.
+  const auto yaml = UnprotectedCoil() + "    stopSwitches:\n      - 200\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
 TEST_CASE("a lamp is not warned about") {
   // A lamp output is meant to sit on indefinitely. It is the one exemption.
   const auto yaml =

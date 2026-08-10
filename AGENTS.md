@@ -92,6 +92,15 @@ Optional metadata parsed and exposed here:
   energised, so the coil validator accepts it with no bound at all. Not the
   same as `dualWinding`, which describes a single coil whose EOS contact
   transfers to its own hold winding mechanically.
+- `stopSwitches: [n, ...]` on PWM outputs → up to two switches that cut the
+  output the moment they close, sent as `CONFIG_TOPIC_STOP_SWITCH` and
+  `CONFIG_TOPIC_STOP_SWITCH_2`. The opposite polarity to `fastFlipSwitch`,
+  which runs an output *while* a switch is closed. A flipper's EOS, or the
+  switch at each end of a motor's travel. **Sent before `CONFIG_TOPIC_TYPE`**,
+  because the board registers the output when the type arrives and anything
+  after it lands on the next output. Deliberately not counted as thermal
+  protection: a stop switch can be unplugged or misadjusted, and WPC itself
+  paired one with a timeout rather than trusting it alone.
 - `slowSwitches: true` on boards → the board carries nothing latency-critical
   (start button, coin door, tilt), so it is sorted to the front of the token
   ring and polled on every eighth chain instead of every chain. Skipping is
