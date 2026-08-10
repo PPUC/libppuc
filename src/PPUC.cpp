@@ -538,6 +538,13 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                           // winding. Optional even for a dual-wound coil.
                           ValidateOptionalField<uint32_t>(
                               item, itemPath, "eosSwitch");
+                          // Declares a coil that is the hold winding of a pair
+                          // driven separately - WPC Fliptronic flippers, where
+                          // the CPU drives power and hold as two outputs. A
+                          // hold winding is built to sit energised, so it needs
+                          // no bound. See WarnAboutUnprotectedSolenoids below.
+                          ValidateOptionalField<bool>(
+                              item, itemPath, "holdWinding");
                           ValidateOptionalItems(
                               item, "effects", itemPath,
                               [](const YAML::Node& effect,
@@ -909,6 +916,9 @@ bool PwmTypeNeedsThermalProtection(const std::string& type) {
 //                                survive continuously
 //   3. dualWinding: true       - the coil has its own hold winding, and its
 //                                EOS contact transfers to it mechanically
+//   4. holdWinding: true       - this *is* a hold winding, wound to sit
+//                                energised for as long as the player holds the
+//                                button. Bounding it would drop the flipper.
 //
 // With none of them, a single-winding coil that the ROM leaves on burns out,
 // and takes the driver transistor and possibly more with it.
@@ -938,9 +948,11 @@ void WarnAboutUnprotectedSolenoids(const YAML::Node& config) {
         item["holdPowerActivationTime"].as<uint32_t>();
     const bool dualWinding =
         item["dualWinding"] && item["dualWinding"].as<bool>();
+    const bool holdWinding =
+        item["holdWinding"] && item["holdWinding"].as<bool>();
 
     if (maxPulseTime > 0 || (holdPower > 0 && holdPowerActivationTime > 0) ||
-        dualWinding) {
+        dualWinding || holdWinding) {
       continue;
     }
 
@@ -953,7 +965,9 @@ void WarnAboutUnprotectedSolenoids(const YAML::Node& config) {
         "PPUC: WARNING: nothing bounds how long this device can stay "
         "energised. Set maxPulseTime, or holdPower together with "
         "holdPowerActivationTime, or declare 'dualWinding: true' if this coil "
-        "has its own hold winding and an EOS contact. At %s.\n",
+        "has its own hold winding and an EOS contact, or 'holdWinding: true' "
+        "if this output is itself the hold winding of a separately driven "
+        "pair. At %s.\n",
         itemPath.c_str(), description.c_str(),
         static_cast<unsigned>(item["number"].as<uint32_t>()),
         FormatYamlLocation(item.Mark()).c_str());

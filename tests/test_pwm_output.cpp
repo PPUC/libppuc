@@ -123,9 +123,10 @@ TEST_CASE("a solenoid relying on hold power is accepted") {
 
 // --- thermal protection (STABILIZATION_PLAN.md 2.2) --------------------------
 //
-// A solenoid needs at least one of: maxPulseTime, hold power, or its own hold
-// winding declared with dualWinding. With none of them, nothing bounds how
-// long the coil stays energised.
+// A solenoid needs at least one of: maxPulseTime, hold power, its own hold
+// winding declared with dualWinding, or being a hold winding itself
+// (holdWinding). With none of them, nothing bounds how long the coil stays
+// energised.
 //
 // These warn rather than reject, for one release: every existing game config
 // predates dualWinding, so a correctly wired dual-wound flipper currently
@@ -223,6 +224,49 @@ TEST_CASE("dualWinding must be a boolean") {
 
   const auto error = LoadAndCaptureError(yaml);
   CHECK(error.find("dualWinding") != std::string::npos);
+}
+
+TEST_CASE("holdWinding counts as protection") {
+  // A WPC Fliptronic flipper is two outputs: the CPU drives a power winding
+  // and a hold winding separately. The hold winding is wound to sit energised
+  // for as long as the player holds the button, so bounding it with a
+  // maxPulseTime would drop the flipper mid-game. It is correct with no bound
+  // at all, which nothing could express before.
+  const auto yaml = UnprotectedCoil() + "    holdWinding: true\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+        std::string::npos);
+}
+
+TEST_CASE("holdWinding false does not count as protection") {
+  const auto yaml = UnprotectedCoil() + "    holdWinding: false\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
+TEST_CASE("holdWinding must be a boolean") {
+  const auto yaml = UnprotectedCoil() + "    holdWinding: sometimes\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("holdWinding") != std::string::npos);
+}
+
+TEST_CASE("the warning names holdWinding as a way out") {
+  // Whoever reads the warning has to be able to act on it. A Fliptronic hold
+  // winding is the one case where every other remedy it suggests is wrong.
+  const auto output = LoadAndCaptureStdout(UnprotectedCoil());
+
+  CHECK(output.find("holdWinding") != std::string::npos);
+}
+
+TEST_CASE("a power winding still needs its own bound") {
+  // holdWinding exempts the hold output, not its partner. The power winding
+  // burns exactly like any other coil.
+  const auto yaml = UnprotectedCoil() + "    holdWinding: false\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
 }
 
 TEST_CASE("a lamp is not warned about") {

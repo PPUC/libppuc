@@ -87,6 +87,11 @@ Optional metadata parsed and exposed here:
 - `ballSearch: true` on PWM outputs/coils → `PPUCCoil::ballSearch`. `libppuc`
   does **not** fire ball-search coils itself; `../ppuc` decides.
 - `pollEvents: true` on boards → registers the board as switch-capable.
+- `holdWinding: true` on PWM outputs → the output is the hold winding of a
+  pair the CPU drives separately (WPC Fliptronic flippers). It is wound to sit
+  energised, so the coil validator accepts it with no bound at all. Not the
+  same as `dualWinding`, which describes a single coil whose EOS contact
+  transfers to its own hold winding mechanically.
 - `slowSwitches: true` on boards → the board carries nothing latency-critical
   (start button, coin door, tilt), so it is sorted to the front of the token
   ring and polled on every eighth chain instead of every chain. Skipping is

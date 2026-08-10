@@ -36,6 +36,7 @@ KNOWN_ABSENT = {
     "switchMatrix": "optional; only games with an original matrix harness",
     "dualWinding": "optional; games must be re-exported since config-tool gained the field",
     "eosSwitch": "optional; same as dualWinding",
+    "holdWinding": "optional; no game has a separately driven flipper pair yet",
     "slowSwitches": "optional; no game has marked a board yet",
     "options": "optional LED effect field",
     "fadeRate": "optional LED effect field",
