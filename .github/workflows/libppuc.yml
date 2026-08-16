@@ -87,6 +87,24 @@ jobs:
           echo "${EXPORTS}"
           python3 tools/check-schema-drift.py ${EXPORTS}
 
+  gamecore-drift:
+    name: GameCore schema drift between config-tool and ppuc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: libppuc
+      # The emGame/tilt/ballSave schema is described in two repositories that
+      # cannot see each other: config-tool writes it, ppuc reads it. A key added
+      # to one and not the other fails silently -- an operator sets a value in
+      # the UI and nothing reaches the machine. Both are public, no token needed.
+      - name: Fetch the exporter and the parser
+        run: |
+          git clone --depth 1 https://github.com/PPUC/config-tool.git config-tool
+          git clone --depth 1 https://github.com/PPUC/ppuc.git ppuc
+      - name: Check for drift
+        run: python3 libppuc/tools/check-gamecore-drift.py --strict --root .
+
   build:
     name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}

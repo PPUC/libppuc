@@ -73,7 +73,35 @@ KNOWN_UNVALIDATED = {
     # Left as-is rather than removed, because something outside the stack may.
     "dipSwitches": "exported but read by nothing in libppuc or ppuc",
     "mechs": "exported but read by nothing in libppuc or ppuc",
+    # Host-side blocks, read by ppuc-pinmame and deliberately ignored here.
+    # See HOST_SIDE_BLOCKS below for why their contents are not checked either.
+    "emGame": "read by ppuc-pinmame (GameCore); libppuc ignores it by design",
+    "tilt": "read by ppuc-pinmame (tilt warnings); libppuc ignores it by design",
+    "ballSave": "read by ppuc-pinmame (ball save); libppuc ignores it by design",
 }
+
+# Top-level blocks describing the game rather than the wiring.
+#
+# ppuc-pinmame parses these; libppuc never validates them, and that is the whole
+# point -- it is what lets the ROM-less schema evolve without a libppuc release
+# and a SHA pin bump. Checking their contents here would report every key inside
+# them as drift forever, so the subtree is skipped and the block names are
+# recorded above.
+#
+# They are not unchecked, just checked elsewhere:
+# libppuc/tools/check-gamecore-drift.py compares them against the exporter.
+HOST_SIDE_BLOCKS = {"emGame", "tilt", "ballSave"}
+
+# Blocks whose child keys are not schema at all.
+#
+# switchGroups is validated by libppuc, but its children are names the operator
+# chose -- "slingshots", "targets" -- and no validator can ever name those. The
+# first export to use switch groups would otherwise report each group name as
+# drift forever.
+NAMED_BY_OPERATOR = {"switchGroups"}
+
+# Every block whose contents this checker skips, for either reason.
+SKIP_SUBTREE_OF = HOST_SIDE_BLOCKS | NAMED_BY_OPERATOR
 
 
 def validated_keys() -> set:
@@ -100,10 +128,27 @@ def export_keys(path: Path) -> set:
     the exporter writes one key per line, which is all that has to hold.
     """
     keys = set()
+    skip_deeper_than = None
     for line in path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+
+        indent = len(line) - len(line.lstrip())
+        # Inside a host-side block: skip until the indentation returns to the
+        # level of the block key itself.
+        if skip_deeper_than is not None:
+            if indent > skip_deeper_than:
+                continue
+            skip_deeper_than = None
+
         match = re.match(r"\s*(?:-\s+)?([A-Za-z][A-Za-z0-9_]*):", line)
-        if match:
-            keys.add(match.group(1))
+        if not match:
+            continue
+
+        key = match.group(1)
+        keys.add(key)
+        if indent == 0 and key in SKIP_SUBTREE_OF:
+            skip_deeper_than = indent
     return keys
 
 
