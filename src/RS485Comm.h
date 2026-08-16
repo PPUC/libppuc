@@ -115,6 +115,7 @@ class RS485Comm {
   void SetSwitchNumbersByBoard(
       const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
   void SetSkippedBoards(const std::set<uint8_t>& boards);
+  void AddSkippedBoard(uint8_t board);
   void SetButtonSwitchNumbers(const std::set<uint16_t>& numbers);
   void FinalizeConfiguredBoardPresence();
   bool IsBoardPresent(uint8_t board) const;

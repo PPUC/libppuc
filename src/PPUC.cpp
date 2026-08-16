@@ -457,6 +457,7 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
     ValidateRequiredField<uint8_t>(board, path, "number");
     ValidateRequiredField<bool>(board, path, "pollEvents");
     ValidateOptionalField<bool>(board, path, "slowSwitches");
+    ValidateOptionalField<bool>(board, path, "virtual");
   }
 
   const YAML::Node switchMatrix = config["switchMatrix"];
@@ -1298,6 +1299,25 @@ bool PPUC::Connect() {
                           (uint8_t)CONFIG_TOPIC_NUMBER,
                           m_ppucConfig["gameOnSolenoid"].as<uint8_t>()));
       m_gameOnSolenoid = m_ppucConfig["gameOnSolenoid"].as<uint8_t>();
+
+      // A switch the host asserts while the machine is tilted. While it is
+      // closed, boards inhibit their fast-flip outputs locally, which is the
+      // only way to drop a flipper the player is holding. Optional: a machine
+      // without one still runs, it just cannot kill the flippers on tilt.
+      if (m_tiltSwitch != 0) {
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            boardNumber, (uint8_t)CONFIG_TOPIC_TILT_SWITCH, 0,
+            (uint8_t)CONFIG_TOPIC_NUMBER, m_tiltSwitch));
+      }
+
+      if (n_board["virtual"] && n_board["virtual"].as<bool>()) {
+        // Declared virtual rather than merely absent. Switches on such a board
+        // have no wiring; the host drives them with SetSwitchState and every
+        // real board consumes them off the bus. Relying on a board "happening
+        // not to answer" would be fragile in exactly the way that produces a
+        // machine where tilt silently does nothing.
+        m_pRS485Comm->AddSkippedBoard(boardNumber);
+      }
 
       if (n_board["pollEvents"].as<bool>()) {
         m_pRS485Comm->RegisterSwitchBoard(boardNumber);

@@ -48,6 +48,11 @@ class PPUCAPI PPUC {
   void SetDebug(bool debug);
   void SetDebugErrors(bool debugErrors);
   void SetSkippedBoardsCsv(const char* skippedBoardsCsv);
+  // A switch number the host asserts while the machine is tilted, so boards can
+  // inhibit their fast-flip outputs locally. Must be set before Connect(); it is
+  // sent as a config topic during session setup. Zero disables the feature.
+  void SetTiltSwitch(uint8_t number) { m_tiltSwitch = number; }
+  uint8_t GetTiltSwitch() const { return m_tiltSwitch; }
   void SetSwitchReplyDelayUs(uint32_t delayUs);
   void SetSwitchRefreshIdleMs(uint32_t idleMs);
   void SetOutputFrameIntervalMs(uint32_t intervalMs);
@@ -124,6 +129,7 @@ class PPUCAPI PPUC {
   uint8_t m_platform;
   uint8_t m_coinDoorClosedSwitch;
   uint8_t m_gameOnSolenoid;
+  uint8_t m_tiltSwitch = 0;
   uint32_t m_switchReplyDelayUs = 0;
   uint32_t m_switchRefreshIdleMs = 0;
   uint8_t m_coilHoldFrames = 3;

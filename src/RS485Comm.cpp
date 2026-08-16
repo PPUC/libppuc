@@ -875,6 +875,14 @@ void RS485Comm::SetSkippedBoards(const std::set<uint8_t>& boards) {
   m_boardPresenceFinalized = false;
 }
 
+void RS485Comm::AddSkippedBoard(uint8_t board) {
+  // Additive rather than replacing, because --skip-boards and a `virtual: true`
+  // board in the YAML are two independent reasons for the host to own a board's
+  // switches, and a machine can have both.
+  m_skippedBoards.insert(board);
+  m_boardPresenceFinalized = false;
+}
+
 void RS485Comm::EnsureConfiguredBoardPresenceKnown() {
   if (m_boardPresenceFinalized) {
     return;
