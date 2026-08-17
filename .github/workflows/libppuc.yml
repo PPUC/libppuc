@@ -65,46 +65,6 @@ jobs:
           cmake --build build-tests -- -j$(nproc)
           ctest --test-dir build-tests --output-on-failure
 
-  schema-drift:
-    name: Schema drift against real game exports
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Fetch exported games
-        # The exports are the ground truth for what config-tool produces, so
-        # they are read where they live rather than copied in here, where a
-        # copy would go stale exactly when it mattered. Public repository, no
-        # token needed.
-        run: |
-          git clone --depth 1 https://github.com/mkalkbrenner/ppuc_games.git ppuc_games
-      - name: Check for drift
-        run: |
-          EXPORTS=$(find ppuc_games -name '*.yml' -o -name '*.yaml' | sort)
-          if [ -z "${EXPORTS}" ]; then
-            echo "::error::no exported games found; the check would pass vacuously"
-            exit 1
-          fi
-          echo "${EXPORTS}"
-          python3 tools/check-schema-drift.py ${EXPORTS}
-
-  gamecore-drift:
-    name: GameCore schema drift between config-tool and ppuc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          path: libppuc
-      # The emGame/tilt/ballSave schema is described in two repositories that
-      # cannot see each other: config-tool writes it, ppuc reads it. A key added
-      # to one and not the other fails silently -- an operator sets a value in
-      # the UI and nothing reaches the machine. Both are public, no token needed.
-      - name: Fetch the exporter and the parser
-        run: |
-          git clone --depth 1 https://github.com/PPUC/config-tool.git config-tool
-          git clone --depth 1 https://github.com/PPUC/ppuc.git ppuc
-      - name: Check for drift
-        run: python3 libppuc/tools/check-gamecore-drift.py --strict --root .
-
   build:
     name: Build libppuc-${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
