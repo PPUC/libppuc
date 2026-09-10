@@ -55,6 +55,17 @@ static constexpr uint32_t RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS = 4;
 #define RS485_COMM_SLOW_SWITCH_POLL_DIVIDER 8
 #define RS485_COMM_CONFIG_ACK_TIMEOUT_US 50000
 #define RS485_COMM_CONFIG_ACK_RETRIES 3
+// A version query is a single frame answered by a single board, with nothing
+// arbitrating the wire. One lost reply used to mean "no firmware version", so
+// a board that is present, configured and answering everything else still got
+// reported as unknown. Retried like a config frame, for the same reason.
+#define RS485_COMM_VERSION_QUERY_ATTEMPTS 3
+// How long to spend assembling one admin frame once a sync byte is seen,
+// bounded independently of the query timeout so a false sync costs a slice
+// rather than the whole attempt.
+#define RS485_COMM_ADMIN_FRAME_ASSEMBLY_MS 50
+// Must cover a first-time LittleFS format on the board, not just a reply.
+#define RS485_COMM_UPDATE_BEGIN_TIMEOUT_MS 30000
 #define RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD 10
 
 struct VirtualSwitchBoardState {
@@ -146,6 +157,10 @@ class RS485Comm {
   // broadcasting: administration happens outside the switch chain, so nothing
   // arbitrates who replies.
   PPUCBoardVersion QueryBoardVersion(uint8_t board, uint32_t timeoutMs = 250);
+
+  // Reads one board's transport counters. Diagnostics: run it after a test to
+  // see whether a board that never answered had seen the frame at all.
+  PPUCBoardStats QueryBoardStats(uint8_t board, uint32_t timeoutMs = 250);
 
   // Sends a firmware image to one board and asks it to install.
   //

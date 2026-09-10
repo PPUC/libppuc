@@ -95,6 +95,10 @@ class PPUCAPI PPUC {
   // than omitted, so a missing board is visible instead of silently absent.
   std::vector<PPUCBoardVersion> QueryBoardVersions();
 
+  // Each board's own transport counters, for diagnosing a board that stopped
+  // answering. Safe to call at any time; it is an out-of-band admin exchange.
+  std::vector<PPUCBoardStats> QueryBoardStats();
+
   // Sends a firmware image to one board. Call StopUpdates() first: the runtime
   // loop must not be transmitting into the middle of a transfer.
   PPUCFirmwareUpdateResult UpdateBoardFirmware(

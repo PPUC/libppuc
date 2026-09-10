@@ -1620,75 +1620,182 @@ PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
     return result;
   }
 
-  // Anything still in flight would be read as the reply.
-  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+  uint8_t frame[ppuc::v2::kAdminFrameBytes];
 
-  uint8_t query[ppuc::v2::kAdminFrameBytes];
-  ppuc::v2::BuildVersionQueryFrame(query, board, m_sequence++, m_epoch);
-  if (!WriteBytes("AdminVersionQuery", query, sizeof(query))) {
+  for (uint8_t attempt = 0; attempt < RS485_COMM_VERSION_QUERY_ATTEMPTS;
+       ++attempt) {
+    // Anything still in flight would be read as the reply. On a retry that
+    // includes the previous attempt's reply, if it arrived after the deadline.
+    sp_flush(m_pSerialPort, SP_BUF_INPUT);
+
+    uint8_t query[ppuc::v2::kAdminFrameBytes];
+    ppuc::v2::BuildVersionQueryFrame(query, board, m_sequence++, m_epoch);
+    if (!WriteBytes("AdminVersionQuery", query, sizeof(query))) {
+      return result;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+      // Hunt for sync, then read the rest of a fixed-size admin frame. A board
+      // that is mid-boot can emit anything, so nothing here assumes the first
+      // byte seen is ours.
+      uint8_t byte = 0;
+      if (sp_blocking_read(m_pSerialPort, &byte, 1, 5) <= 0) {
+        continue;
+      }
+      if (byte != ppuc::v2::kSyncByte) {
+        continue;
+      }
+      frame[0] = byte;
+      // Bound frame assembly separately from the query. A byte that merely
+      // looks like sync - the tail of a config ack still arriving when the
+      // input buffer was flushed - must not cost the whole attempt, or the
+      // real reply is never looked for. Long enough to cover a USB adapter
+      // splitting one frame across packets, short enough to leave time to
+      // resync.
+      const auto frameDeadline =
+          std::min(deadline, std::chrono::steady_clock::now() +
+                                 std::chrono::milliseconds(
+                                     RS485_COMM_ADMIN_FRAME_ASSEMBLY_MS));
+
+      size_t got = 1;
+      bool complete = true;
+      while (got < sizeof(frame)) {
+        const int read = sp_blocking_read(m_pSerialPort, &frame[got],
+                                          sizeof(frame) - got,
+                                          RS485_COMM_SERIAL_READ_TIMEOUT);
+        if (read > 0) {
+          got += static_cast<size_t>(read);
+          continue;
+        }
+        // A short read is not an absent reply. libserialport returns fewer
+        // bytes than asked for even on the blocking API - ReceiveConfigAck
+        // carries the same note - and a USB adapter's latency timer can split
+        // one frame across two packets. Giving up on the first short read threw
+        // away the bytes already taken and left the sync hunt stranded in the
+        // middle of the frame it wanted, so the reply could never be recovered.
+        // That is why a board answering everything else still reported no
+        // firmware version, and why which board lost was stable across runs.
+        if (std::chrono::steady_clock::now() >= frameDeadline) {
+          complete = false;
+          break;
+        }
+      }
+      if (!complete) {
+        continue;
+      }
+
+      if (ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin) {
+        continue;
+      }
+      if (!ppuc::v2::VerifyCrc(frame, sizeof(frame))) {
+        ReportAnomaly(Anomaly::FrameCrc,
+                      "Invalid admin frame CRC while querying board %u", board);
+        continue;
+      }
+
+      uint8_t command = 0;
+      uint8_t reportedBoard = 0;
+      uint8_t data[ppuc::v2::kAdminDataBytes] = {0};
+      ppuc::v2::ReadAdminPayload(&frame[ppuc::v2::kHeaderBytes], command,
+                                 reportedBoard, data);
+      if (command != ppuc::v2::kAdminVersionReport || reportedBoard != board) {
+        continue;
+      }
+
+      result.responded = true;
+      result.firmwareMajor = data[ppuc::v2::kAdminVersionFirmwareMajor];
+      result.firmwareMinor = data[ppuc::v2::kAdminVersionFirmwareMinor];
+      result.firmwarePatch = data[ppuc::v2::kAdminVersionFirmwarePatch];
+      result.adminProtocolMajor = data[ppuc::v2::kAdminVersionProtocolMajor];
+      result.adminProtocolMinor = data[ppuc::v2::kAdminVersionProtocolMinor];
+      result.capabilities = data[ppuc::v2::kAdminVersionCapabilities];
+      result.boardType = data[ppuc::v2::kAdminVersionBoardType];
+      result.buildId = ppuc::v2::ReadU32(&data[ppuc::v2::kAdminVersionBuildId]);
+      return result;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  return result;
+}
+
+PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
+  PPUCBoardStats result;
+  result.board = board;
+  if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
     return result;
   }
 
-  const auto deadline = std::chrono::steady_clock::now() +
-                        std::chrono::milliseconds(timeoutMs);
-  uint8_t frame[ppuc::v2::kAdminFrameBytes];
+  uint8_t frame[ppuc::v2::kStatsReportFrameBytes];
 
-  while (std::chrono::steady_clock::now() < deadline) {
-    // Hunt for sync, then read the rest of a fixed-size admin frame. A board
-    // that is mid-boot can emit anything, so nothing here assumes the first
-    // byte seen is ours.
-    uint8_t byte = 0;
-    if (sp_blocking_read(m_pSerialPort, &byte, 1, 5) <= 0) {
-      continue;
-    }
-    if (byte != ppuc::v2::kSyncByte) {
-      continue;
-    }
-    frame[0] = byte;
+  for (uint8_t attempt = 0; attempt < RS485_COMM_VERSION_QUERY_ATTEMPTS;
+       ++attempt) {
+    sp_flush(m_pSerialPort, SP_BUF_INPUT);
 
-    size_t got = 1;
-    bool complete = true;
-    while (got < sizeof(frame)) {
-      const int read = sp_blocking_read(m_pSerialPort, &frame[got],
-                                        sizeof(frame) - got, 5);
-      if (read <= 0) {
-        complete = false;
-        break;
+    uint8_t query[ppuc::v2::kStatsQueryFrameBytes];
+    ppuc::v2::BuildStatsQueryFrame(query, board, m_sequence++, m_epoch);
+    if (!WriteBytes("AdminStatsQuery", query, sizeof(query))) {
+      return result;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+      uint8_t byte = 0;
+      if (sp_blocking_read(m_pSerialPort, &byte, 1, 5) <= 0) {
+        continue;
       }
-      got += static_cast<size_t>(read);
-    }
-    if (!complete) {
-      continue;
+      if (byte != ppuc::v2::kSyncByte) {
+        continue;
+      }
+      frame[0] = byte;
+
+      const auto frameDeadline =
+          std::min(deadline, std::chrono::steady_clock::now() +
+                                 std::chrono::milliseconds(
+                                     RS485_COMM_ADMIN_FRAME_ASSEMBLY_MS));
+      size_t got = 1;
+      bool complete = true;
+      while (got < sizeof(frame)) {
+        const int read = sp_blocking_read(m_pSerialPort, &frame[got],
+                                          sizeof(frame) - got,
+                                          RS485_COMM_SERIAL_READ_TIMEOUT);
+        if (read > 0) {
+          got += static_cast<size_t>(read);
+          continue;
+        }
+        if (std::chrono::steady_clock::now() >= frameDeadline) {
+          complete = false;
+          break;
+        }
+      }
+      if (!complete) {
+        continue;
+      }
+      if (ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin) {
+        continue;
+      }
+      if (!ppuc::v2::VerifyCrc(frame, sizeof(frame))) {
+        continue;
+      }
+
+      const uint8_t* payload = &frame[ppuc::v2::kHeaderBytes];
+      if (payload[0] != ppuc::v2::kAdminStatsReport || payload[1] != board) {
+        continue;
+      }
+      ppuc::v2::ReadStatsReport(payload, result.rxFrames, result.rxCrcFail,
+                                result.rawBytes, result.txFrames,
+                                result.selected);
+      result.responded = true;
+      return result;
     }
 
-    if (ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin) {
-      continue;
-    }
-    if (!ppuc::v2::VerifyCrc(frame, sizeof(frame))) {
-      ReportAnomaly(Anomaly::FrameCrc,
-                    "Invalid admin frame CRC while querying board %u", board);
-      continue;
-    }
-
-    uint8_t command = 0;
-    uint8_t reportedBoard = 0;
-    uint8_t data[ppuc::v2::kAdminDataBytes] = {0};
-    ppuc::v2::ReadAdminPayload(&frame[ppuc::v2::kHeaderBytes], command,
-                               reportedBoard, data);
-    if (command != ppuc::v2::kAdminVersionReport || reportedBoard != board) {
-      continue;
-    }
-
-    result.responded = true;
-    result.firmwareMajor = data[ppuc::v2::kAdminVersionFirmwareMajor];
-    result.firmwareMinor = data[ppuc::v2::kAdminVersionFirmwareMinor];
-    result.firmwarePatch = data[ppuc::v2::kAdminVersionFirmwarePatch];
-    result.adminProtocolMajor = data[ppuc::v2::kAdminVersionProtocolMajor];
-    result.adminProtocolMinor = data[ppuc::v2::kAdminVersionProtocolMinor];
-    result.capabilities = data[ppuc::v2::kAdminVersionCapabilities];
-    result.boardType = data[ppuc::v2::kAdminVersionBoardType];
-    result.buildId = ppuc::v2::ReadU32(&data[ppuc::v2::kAdminVersionBuildId]);
-    return result;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 
   return result;
@@ -1711,16 +1818,27 @@ bool RS485Comm::AwaitAdminReply(uint8_t board, uint8_t expectedCommand,
     }
     frame[0] = byte;
 
+    // Bounded separately from the reply window, as in QueryBoardVersion: a
+    // short read is not an absent ack, and a byte that merely looks like sync
+    // must not cost the whole wait.
+    const auto frameDeadline =
+        std::min(deadline, std::chrono::steady_clock::now() +
+                               std::chrono::milliseconds(
+                                   RS485_COMM_ADMIN_FRAME_ASSEMBLY_MS));
     size_t got = 1;
     bool complete = true;
     while (got < sizeof(frame)) {
       const int read =
-          sp_blocking_read(m_pSerialPort, &frame[got], sizeof(frame) - got, 5);
-      if (read <= 0) {
+          sp_blocking_read(m_pSerialPort, &frame[got], sizeof(frame) - got,
+                           RS485_COMM_SERIAL_READ_TIMEOUT);
+      if (read > 0) {
+        got += static_cast<size_t>(read);
+        continue;
+      }
+      if (std::chrono::steady_clock::now() >= frameDeadline) {
         complete = false;
         break;
       }
-      got += static_cast<size_t>(read);
     }
     if (!complete || ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin) {
       continue;
@@ -1777,20 +1895,34 @@ PPUCFirmwareUpdateResult RS485Comm::UpdateBoardFirmware(
   }
 
   const uint16_t imageCrc = ppuc::v2::Crc16Ccitt(image, imageBytes);
-  sp_flush(m_pSerialPort, SP_BUF_INPUT);
-
-  uint8_t begin[ppuc::v2::kUpdateBeginFrameBytes];
-  ppuc::v2::BuildUpdateBeginFrame(begin, board, m_sequence++, m_epoch,
-                                  static_cast<uint32_t>(imageBytes), imageCrc);
-  if (!WriteBytes("UpdateBegin", begin, sizeof(begin))) {
-    result.error = "could not send UpdateBegin";
-    return result;
-  }
 
   uint8_t status = 0;
   uint32_t offset = 0;
-  if (!AwaitAdminReply(board, ppuc::v2::kAdminUpdateBeginAck, &status, &offset,
-                       2000)) {
+  bool begun = false;
+  // Retried like the chunks and the version query. A lost UpdateBegin ack used
+  // to end the whole update before a byte of the image was sent, which is a
+  // harsh outcome for one dropped frame when re-asking costs nothing: a board
+  // that already staged treats a fresh Begin as a restart.
+  for (uint8_t attempt = 0;
+       attempt < RS485_COMM_VERSION_QUERY_ATTEMPTS && !begun; ++attempt) {
+    sp_flush(m_pSerialPort, SP_BUF_INPUT);
+
+    uint8_t begin[ppuc::v2::kUpdateBeginFrameBytes];
+    ppuc::v2::BuildUpdateBeginFrame(begin, board, m_sequence++, m_epoch,
+                                    static_cast<uint32_t>(imageBytes), imageCrc);
+    if (!WriteBytes("UpdateBegin", begin, sizeof(begin))) {
+      result.error = "could not send UpdateBegin";
+      return result;
+    }
+  // Generous on purpose. A board that has never staged an update formats its
+  // LittleFS partition inside this call, which erases the whole filesystem
+  // region with interrupts off and the UART unserviced - far longer than a
+  // frame exchange. Two seconds covered the steady-state case and nothing else,
+  // so the very first update of a board always failed before sending a byte.
+    begun = AwaitAdminReply(board, ppuc::v2::kAdminUpdateBeginAck, &status,
+                            &offset, RS485_COMM_UPDATE_BEGIN_TIMEOUT_MS);
+  }
+  if (!begun) {
     result.error = "board did not acknowledge UpdateBegin";
     return result;
   }
@@ -1813,6 +1945,10 @@ PPUCFirmwareUpdateResult RS485Comm::UpdateBoardFirmware(
     // A retry is worth having: a chunk lost to a transient is otherwise a
     // failed update, and the board rejects anything out of order anyway.
     for (int attempt = 0; attempt < 3 && !acked; ++attempt) {
+      // Anything already buffered predates this chunk - a duplicate ack from a
+      // retried UpdateBegin, or a late ack for the previous chunk - and would
+      // be read in place of this chunk's answer.
+      sp_flush(m_pSerialPort, SP_BUF_INPUT);
       if (!WriteBytes("UpdateChunk", chunk.data(), frameBytes)) {
         result.error = "could not send a chunk";
         result.bytesSent = sent;

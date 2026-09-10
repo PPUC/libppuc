@@ -92,6 +92,19 @@ struct PPUCFirmwareUpdateResult {
 };
 
 // What a board reports about itself when asked, before any session exists.
+// One board's own view of the transport, read out of band. The host can see
+// that a board did not answer but not why; these say whether it saw the frame.
+struct PPUCBoardStats {
+  uint8_t board = 0;
+  bool responded = false;
+  uint32_t rxFrames = 0;
+  uint32_t rxCrcFail = 0;
+  uint32_t rawBytes = 0;
+  uint32_t txFrames = 0;
+  // Times the token named this board, whether or not it managed to answer.
+  uint32_t selected = 0;
+};
+
 struct PPUCBoardVersion {
   uint8_t board = 0;
   bool responded = false;
