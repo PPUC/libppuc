@@ -1486,6 +1486,9 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
     ++m_switchReplyMissCount;
     ReportAnomaly(Anomaly::SwitchChainMiss,
                   "Missed V2 switch reply chain %u time(s)", m_switchReplyMisses);
+    // The boards that never got their turn have not reported since before the
+    // chain broke, so treat the whole chain's state as suspect and refresh it.
+    RequestSwitchRefresh();
     if (m_switchReplyMisses >= RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD) {
       ++m_sessionResyncCount;
       m_needSessionResync = true;
@@ -2373,6 +2376,12 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     if (receivedCrc != calculatedCrc) {
       ReportAnomaly(Anomaly::FrameCrc, "Invalid V2 switch frame CRC: got=%04X expected=%04X",
                   receivedCrc, calculatedCrc);
+      // A reply that failed its CRC may have carried a change this host will
+      // now never see, and the bitmap is stale until something says otherwise.
+      // The host knows that here, so it asks rather than waiting for the
+      // periodic refresh to come round: healing what is known to be lost is
+      // what makes it safe to let that interval be long.
+      RequestSwitchRefresh();
       return false;
     }
 
