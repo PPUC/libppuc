@@ -1285,11 +1285,36 @@ bool PPUC::Connect() {
           boardNumber, (uint8_t)CONFIG_TOPIC_PLATFORM, 0,
           (uint8_t)CONFIG_TOPIC_PLATFORM, m_platform));
 
-      m_pRS485Comm->SendConfigEvent(
-          new ConfigEvent(boardNumber,
-                          (uint8_t)CONFIG_TOPIC_COIN_DOOR_CLOSED_SWITCH, 0,
-                          (uint8_t)CONFIG_TOPIC_NUMBER,
-                          m_ppucConfig["coinDoorClosedSwitch"].as<uint8_t>()));
+      // Zero when the door switch sits on a board that is not present.
+      //
+      // A board gates high power on this switch, and it can only learn the
+      // switch's state from that board's own switch replies - a host-side
+      // virtualized state never reaches it. Naming a switch nobody can report
+      // would leave every board holding high power off forever. Zero means "no
+      // coin door here", which the boards treat as closed.
+      const uint8_t configuredCoinDoorSwitch =
+          m_ppucConfig["coinDoorClosedSwitch"].as<uint8_t>();
+      // Decided from the skipped-board set rather than from switch
+      // virtualization: which boards are present is not yet established while
+      // configuration is still being sent, so IsSwitchVirtualized() answers
+      // false here for a switch that will end up virtual.
+      bool coinDoorBoardPresent = false;
+      const YAML::Node& allSwitches = m_ppucConfig["switches"];
+      if (HasSequenceItems(allSwitches)) {
+        for (YAML::Node n_switch : allSwitches) {
+          if (n_switch["number"].as<uint16_t>() != configuredCoinDoorSwitch) {
+            continue;
+          }
+          coinDoorBoardPresent =
+              !isSkippedBoard(n_switch["board"].as<uint8_t>());
+          break;
+        }
+      }
+      const uint8_t coinDoorForBoards =
+          coinDoorBoardPresent ? configuredCoinDoorSwitch : 0;
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          boardNumber, (uint8_t)CONFIG_TOPIC_COIN_DOOR_CLOSED_SWITCH, 0,
+          (uint8_t)CONFIG_TOPIC_NUMBER, coinDoorForBoards));
       m_coinDoorClosedSwitch =
           m_ppucConfig["coinDoorClosedSwitch"].as<uint8_t>();
 

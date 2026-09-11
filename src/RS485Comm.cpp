@@ -526,6 +526,12 @@ void RS485Comm::QueueEvent(Event* event) {
         std::lock_guard<std::mutex> lock(m_stateMutex);
         const bool coilOn = event->value != 0;
         ppuc::v2::SetBitmapBit(m_coilBitmap, it->second, coilOn);
+        if (m_debug) {
+          DebugPrintf("Coil %u -> index %u = %u (coilBits=%u)",
+                      static_cast<unsigned>(event->eventId),
+                      static_cast<unsigned>(it->second), coilOn ? 1u : 0u,
+                      static_cast<unsigned>(m_runtimeConfig.coilBits));
+        }
         if (coilOn) {
           m_coilHoldFrames[it->second] = m_coilHoldFrameCount;
         }
@@ -1833,7 +1839,8 @@ PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
       ppuc::v2::ReadStatsReport(payload, result.rxFrames, result.rxCrcFail,
                                 result.rawBytes, result.txFrames,
                                 result.selected, result.versionQueries,
-                                result.versionReplies);
+                                result.versionReplies,
+                                result.highPowerGate);
       result.responded = true;
       return result;
     }

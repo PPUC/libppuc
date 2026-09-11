@@ -107,6 +107,11 @@ struct PPUCBoardStats {
   uint32_t versionQueries = 0;
   // Version reports this board actually put on the wire.
   uint32_t versionReplies = 0;
+  // High-power gate: bit0 powerOn, bit1 coinDoorClosed,
+  // bit2 gameOnSolenoid configured, bit3 coinDoorSwitch configured.
+  // bit0 powerOn, bit1 coinDoorClosed, bit3 coinDoorSwitch set;
+  // bits 8-15 the configured gameOnSolenoid, bits 16-23 the coinDoorSwitch.
+  uint32_t highPowerGate = 0;
 };
 
 struct PPUCBoardVersion {
