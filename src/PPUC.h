@@ -54,6 +54,16 @@ class PPUCAPI PPUC {
   void SetTiltSwitch(uint8_t number) { m_tiltSwitch = number; }
   uint8_t GetTiltSwitch() const { return m_tiltSwitch; }
   void SetSwitchReplyDelayUs(uint32_t delayUs);
+  // What the host currently believes a switch is, rather than what it last
+  // changed to. Needed wherever resting state matters - a closed coin door,
+  // balls already in the trough - because a machine that is not moving reports
+  // nothing at all.
+  bool IsSwitchClosed(int number);
+
+  // Asks the boards for a full switch state on the next poll cycle instead of
+  // waiting for the periodic one.
+  void RequestSwitchRefresh();
+
   void SetSwitchRefreshIdleMs(uint32_t idleMs);
   void SetOutputFrameIntervalMs(uint32_t intervalMs);
   void SetCoilHoldFrames(uint8_t holdFrames);

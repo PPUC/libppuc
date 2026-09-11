@@ -2153,6 +2153,20 @@ bool RS485Comm::SendOutputStateFrameFromBuffers(uint8_t nextBoard,
   return WriteBytes("OutputStateFrame", buffer, frameBytes);
 }
 
+bool RS485Comm::IsSwitchClosed(uint16_t number) const {
+  for (size_t index = 0; index < m_switchIndexToNumber.size(); ++index) {
+    if (m_switchIndexToNumber[index] == number) {
+      return ppuc::v2::GetBitmapBit(m_switchBitmap,
+                                    static_cast<uint16_t>(index));
+    }
+  }
+  return false;
+}
+
+void RS485Comm::RequestSwitchRefresh() {
+  m_nextSwitchRefreshAt = std::chrono::steady_clock::now();
+}
+
 void RS485Comm::ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap,
                                       size_t bytes) {
   const uint8_t* ownershipMask =

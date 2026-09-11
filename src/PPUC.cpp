@@ -2049,6 +2049,12 @@ void PPUC::SetSwitchState(int number, int state) {
                                       state == 0 ? 0 : 1);
 }
 
+bool PPUC::IsSwitchClosed(int number) {
+  return m_pRS485Comm->IsSwitchClosed(static_cast<uint16_t>(number));
+}
+
+void PPUC::RequestSwitchRefresh() { m_pRS485Comm->RequestSwitchRefresh(); }
+
 void PPUC::SetSwitchRefreshIdleMs(uint32_t idleMs) {
   m_switchRefreshIdleMs = idleMs;
   m_pRS485Comm->SetSwitchRefreshIdleMs(idleMs);

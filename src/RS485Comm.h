@@ -150,6 +150,18 @@ class RS485Comm {
   bool ShouldAbortConfigurationEarly() const;
   std::vector<uint8_t> GetMissingConfiguredBoards() const;
 
+  // The host's own view of every switch, kept current by the switch replies and
+  // by the periodic full-state refresh. This is the answer to "what is closed
+  // right now" - a coin door, balls sitting in the trough - without waiting for
+  // something to change, because boards report changes and a machine standing
+  // still reports nothing.
+  bool IsSwitchClosed(uint16_t number) const;
+
+  // Brings the next poll cycle's refresh forward. Boards volunteer a full state
+  // every kMaxConsecutiveSwitchNoChangeReplies replies anyway; this asks for one
+  // now rather than waiting, reusing the same kFrameSwitchRefresh path.
+  void RequestSwitchRefresh();
+
   void RegisterSwitchBoard(uint8_t number);
   PPUCSwitchState* GetNextSwitchState();
   uint32_t GetCleanSwitchReplyChainCount() const;
