@@ -390,6 +390,19 @@ void RS485Comm::Run() {
     LogMessage("RS485Comm run thread starting");
 
     while (!m_stopRequested) {
+      // Serial port access is exclusive for the length of one pass.
+      //
+      // Connect() starts this thread before the host has finished its admin
+      // exchanges, so version queries, stats queries and firmware updates all
+      // run while this loop is reading the same port. Without this the two
+      // races: the poll loop consumes a board's version report and discards it
+      // as an unexpected frame, the query times out, and the board is reported
+      // as not answering when it had already replied. That was measurable -
+      // boards counted a reply transmitted for every query received, while the
+      // host saw nothing - and it is why boards queried later, after the
+      // startup poll hold expires, failed more often than the first one.
+      std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
+
       uint8_t eventsSent = 0;
       while (eventsSent++ < RS485_COMM_MAX_EVENTS_TO_SEND) {
         Event* event = nullptr;
@@ -1127,6 +1140,7 @@ PPUCBusHealth RS485Comm::GetBusHealth() const {
   health.switchReplyMisses = m_switchReplyMissCount.load();
   health.sessionResyncs = m_sessionResyncCount.load();
   health.configAckRetries = m_configAckRetryCount.load();
+  health.boardsLostConfiguration = m_boardsLostConfigurationCount.load();
   health.configAckTimeouts = m_configAckTimeoutCount.load();
   health.serialWriteFailures =
       m_anomalies[static_cast<size_t>(Anomaly::SerialWrite)].total.load();
@@ -1612,8 +1626,32 @@ bool RS485Comm::SendRestartFrame() {
   return false;
 }
 
+void RS485Comm::SettleBusBeforeAdmin() {
+  if (m_pSerialPort == NULL) {
+    return;
+  }
+
+  // Configuration ends when the last ack is parsed, not when the last board
+  // stops driving the line. Whatever is still in flight arrives after the
+  // input flush an admin query does, and a trailing byte that happens to be
+  // the sync byte starts a frame hunt that can never complete - the query
+  // spends its whole window on a frame that was never sent.
+  //
+  // The cost falls on whichever admin exchange happens to go first. That was
+  // visible as "the version query is unreliable": running any other admin
+  // exchange ahead of it made the version query succeed every time and moved
+  // the failure onto the new first exchange instead.
+  //
+  // Waiting out the tail once, before the first query, is cheaper than paying
+  // for it with a retry on every caller.
+  std::this_thread::sleep_for(
+      std::chrono::milliseconds(RS485_COMM_ADMIN_SETTLE_MS));
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+}
+
 PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
                                               uint32_t timeoutMs) {
+  std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
   PPUCBoardVersion result;
   result.board = board;
   if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
@@ -1724,6 +1762,7 @@ PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
 }
 
 PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
+  std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
   PPUCBoardStats result;
   result.board = board;
   if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
@@ -1790,7 +1829,8 @@ PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
       }
       ppuc::v2::ReadStatsReport(payload, result.rxFrames, result.rxCrcFail,
                                 result.rawBytes, result.txFrames,
-                                result.selected);
+                                result.selected, result.versionQueries,
+                                result.versionReplies);
       result.responded = true;
       return result;
     }
@@ -1863,6 +1903,10 @@ PPUCFirmwareUpdateResult RS485Comm::UpdateBoardFirmware(
     uint8_t board, uint8_t imageBoardType, const uint8_t* image,
     size_t imageBytes, PPUC_FirmwareProgressCallback progress,
     void* progressUserData) {
+  // Held for the whole transfer: a poll pass landing between a chunk and its
+  // ack would eat the ack and fail the update. QueryBoardVersion() below takes
+  // it recursively, hence the recursive mutex.
+  std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
   PPUCFirmwareUpdateResult result;
   result.board = board;
 
@@ -2287,6 +2331,15 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       ReportAnomaly(Anomaly::BoardStatus, "V2 switch reply requested resync: board=%u flags=0x%02X",
                   expectedBoard, statusFlags);
       m_needSessionResync = true;
+    }
+    if ((statusFlags & ppuc::v2::kStatusNeedsSetup) != 0) {
+      // Counted separately from the resync above. A board only asks for setup
+      // at runtime if it restarted, and a resync cannot put back the per-device
+      // configuration it lost.
+      ++m_boardsLostConfigurationCount;
+      ReportAnomaly(Anomaly::BoardStatus,
+                    "Board %u restarted and lost its configuration",
+                    expectedBoard);
     }
 
     if (parserResynced || switchOverflow) {

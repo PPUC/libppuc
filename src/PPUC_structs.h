@@ -103,6 +103,10 @@ struct PPUCBoardStats {
   uint32_t txFrames = 0;
   // Times the token named this board, whether or not it managed to answer.
   uint32_t selected = 0;
+  // Version queries this board saw arrive, answered or not.
+  uint32_t versionQueries = 0;
+  // Version reports this board actually put on the wire.
+  uint32_t versionReplies = 0;
 };
 
 struct PPUCBoardVersion {
@@ -144,6 +148,14 @@ struct PPUCBusHealth {
   uint32_t switchReplyMisses = 0;       // did not complete (lifetime, not the
                                         // consecutive streak used internally)
   uint32_t sessionResyncs = 0;          // miss streak reached the threshold
+
+  // A board reported that it needs setup while the game was running, which
+  // means it restarted and lost its configuration. Distinct from a resync: a
+  // resync resends setup and mapping frames, but not the per-device config -
+  // power, debounce, maxPulseTime, stop switches - which only Connect() sends.
+  // A board that rejoins on setup alone is driving coils without its
+  // protection, so this is not something to recover from silently.
+  uint32_t boardsLostConfiguration = 0;
 
   // Board configuration, which happens at startup and after a resync.
   uint32_t configAckRetries = 0;   // config frames that needed repeating

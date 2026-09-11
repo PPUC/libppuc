@@ -64,6 +64,8 @@ static constexpr uint32_t RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS = 4;
 // bounded independently of the query timeout so a false sync costs a slice
 // rather than the whole attempt.
 #define RS485_COMM_ADMIN_FRAME_ASSEMBLY_MS 50
+// How long to let the bus fall quiet before the first admin query of a batch.
+#define RS485_COMM_ADMIN_SETTLE_MS 60
 // Must cover a first-time LittleFS format on the board, not just a reply.
 #define RS485_COMM_UPDATE_BEGIN_TIMEOUT_MS 30000
 #define RS485_COMM_INITIAL_CONFIG_ACK_MISS_THRESHOLD 10
@@ -156,6 +158,11 @@ class RS485Comm {
   // Asks one board what it is running. Polls a single board rather than
   // broadcasting: administration happens outside the switch chain, so nothing
   // arbitrates who replies.
+  // Waits out any traffic still in flight from configuration, so the first
+  // admin query does not spend its window on a stale byte. Call once before a
+  // batch of queries, not per query.
+  void SettleBusBeforeAdmin();
+
   PPUCBoardVersion QueryBoardVersion(uint8_t board, uint32_t timeoutMs = 250);
 
   // Reads one board's transport counters. Diagnostics: run it after a test to
@@ -298,6 +305,11 @@ class RS485Comm {
   std::queue<QueuedOutputSnapshot> m_outputSnapshots;
   std::queue<PPUCSwitchState*> m_switches;
   std::mutex m_eventQueueMutex;
+  // Guards the serial port. The poll thread holds it for one pass; admin
+  // exchanges hold it for their duration. Recursive because a firmware update
+  // re-reads the board version while already holding it.
+  std::recursive_mutex m_portMutex;
+  std::atomic<uint32_t> m_boardsLostConfigurationCount { 0 };
   std::mutex m_outputQueueMutex;
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;

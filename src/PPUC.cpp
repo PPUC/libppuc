@@ -2087,6 +2087,7 @@ PPUCFirmwareUpdateResult PPUC::UpdateBoardFirmware(
 }
 
 std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {
+  m_pRS485Comm->SettleBusBeforeAdmin();
   std::vector<PPUCBoardStats> stats;
 
   std::set<uint8_t> boards;
@@ -2107,6 +2108,7 @@ std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {
 }
 
 std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions() {
+  m_pRS485Comm->SettleBusBeforeAdmin();
   std::vector<PPUCBoardVersion> versions;
 
   std::set<uint8_t> boards;
