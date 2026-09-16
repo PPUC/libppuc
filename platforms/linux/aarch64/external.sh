@@ -106,7 +106,7 @@ YAML_CPP_EXPECTED_SHA="${YAML_CPP_SHA}"
 YAML_CPP_FOUND_SHA="$([ -f yaml-cpp/cache.txt ] && cat yaml-cpp/cache.txt || echo "")"
 YAML_CPP_ARTIFACTS_OK=0
 if [ -d "${PROJECT_SOURCE_ROOT}/third-party/include/yaml-cpp" ] &&
-   ls "${PROJECT_SOURCE_ROOT}"/third-party/runtime-libs/linux/aarch64/libyaml-cpp.so.* >/dev/null 2>&1; then
+   [ -e "${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/libyaml-cpp.so" ]; then
    YAML_CPP_ARTIFACTS_OK=1
 fi
 
@@ -129,7 +129,10 @@ if [ "${YAML_CPP_EXPECTED_SHA}" != "${YAML_CPP_FOUND_SHA}" ] || [ "${YAML_CPP_AR
      -DYAML_CPP_INSTALL=OFF \
      -B build
    cmake --build build --config Release
-   cp -P build/libyaml-cpp.so.* ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
+   # libyaml-cpp.so as well as the versioned files, so CMakeLists.txt can link
+   # by name. Its SOVERSION is major.minor, so the file name moves with every
+   # minor release and a hardcoded one breaks on the next bump.
+   cp -P build/libyaml-cpp.so* ${PROJECT_SOURCE_ROOT}/third-party/runtime-libs/linux/aarch64/
    cd ..
 
    echo "${YAML_CPP_EXPECTED_SHA}" > cache.txt

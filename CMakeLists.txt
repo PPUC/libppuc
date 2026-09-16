@@ -112,7 +112,7 @@ if(BUILD_SHARED)
       target_link_directories(ppuc_shared PUBLIC
          third-party/runtime-libs/${PLATFORM}/${ARCH}
       )
-      target_link_libraries(ppuc_shared PUBLIC -l:libserialport.so.0 -l:libyaml-cpp.so.0.8.0)
+      target_link_libraries(ppuc_shared PUBLIC -l:libserialport.so.0 yaml-cpp)
    endif()
 
    if((PLATFORM STREQUAL "win" OR PLATFORM STREQUAL "win-mingw") AND ARCH STREQUAL "x64")
@@ -211,7 +211,7 @@ if(BUILD_TESTS)
       target_link_directories(ppuc_tests PRIVATE
          third-party/runtime-libs/${PLATFORM}/${ARCH}
       )
-      target_link_libraries(ppuc_tests PRIVATE -l:libserialport.so.0 -l:libyaml-cpp.so.0.8.0)
+      target_link_libraries(ppuc_tests PRIVATE -l:libserialport.so.0 yaml-cpp)
    endif()
 
    # The library targets are linked with an @executable_path / $ORIGIN rpath so
