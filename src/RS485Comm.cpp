@@ -930,7 +930,25 @@ void RS485Comm::FinalizeConfiguredBoardPresence() {
 
   for (const uint8_t board : m_configuredBoards) {
     if (m_presentBoards.find(board) != m_presentBoards.end()) {
-      printf("Board %u found.\n", board);
+      // Asked here rather than only by the firmware updater. A board that
+      // answers some config topics and refuses others is a firmware mismatch,
+      // and without the version in this line there is nothing on a normal
+      // startup that distinguishes one board from another - which turns a
+      // stale board into an afternoon of protocol tracing.
+      const PPUCBoardVersion version = QueryBoardVersion(board);
+      if (version.responded) {
+        printf("Board %u found. Firmware %u.%u.%u", board, version.firmwareMajor,
+               version.firmwareMinor, version.firmwarePatch);
+        if (version.buildId != 0) {
+          printf("+%08x", version.buildId);
+        }
+        printf(", admin protocol %u.%u, board type %u\n", version.adminProtocolMajor,
+               version.adminProtocolMinor, version.boardType);
+      } else {
+        // Present enough to acknowledge configuration but not to answer a
+        // version query: worth saying so rather than printing nothing.
+        printf("Board %u found. Firmware version unavailable.\n", board);
+      }
       continue;
     }
 
