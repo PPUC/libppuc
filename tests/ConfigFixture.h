@@ -92,7 +92,7 @@ switches:
     board: 1
     port: 2
     debounce: 5
-    debounceMode: slowStable
+    debounceMode: standard
 )YAML";
 }
 

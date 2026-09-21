@@ -127,8 +127,8 @@ TEST_CASE("optional switch metadata is accepted") {
     CHECK(error.find("debounce") != std::string::npos);
   }
 
-  SUBCASE("all three debounce modes") {
-    for (const char* mode : {"standard", "fastFlip", "slowStable"}) {
+  SUBCASE("both debounce modes") {
+    for (const char* mode : {"standard", "fastFlip"}) {
       CAPTURE(mode);
       const auto yaml =
           Replace(ValidConfig(), "debounceMode: standard",

@@ -1097,8 +1097,6 @@ uint32_t PPUC::ResolveSwitchDebounceMode(const YAML::Node& node) {
       {"standard", SWITCH_DEBOUNCE_STANDARD},
       {"fastFlip", SWITCH_DEBOUNCE_FAST_FLIP},
       {"fast_flip", SWITCH_DEBOUNCE_FAST_FLIP},
-      {"slowStable", SWITCH_DEBOUNCE_SLOW_STABLE},
-      {"slow_stable", SWITCH_DEBOUNCE_SLOW_STABLE},
   };
 
   const auto it = kModes.find(value);
