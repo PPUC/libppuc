@@ -321,6 +321,49 @@ class RS485Comm {
   // exchanges hold it for their duration. Recursive because a firmware update
   // re-reads the board version while already holding it.
   std::recursive_mutex m_portMutex;
+  // How many admin exchanges are waiting for the port.
+  //
+  // The poll loop releases the mutex at the bottom of a pass and reacquires it
+  // at the top of the next one, with every sleep in the pass happening while
+  // holding it. The port is therefore locked essentially all of the time, and
+  // a pthread mutex is not FIFO-fair: a waiter competing against that has no
+  // guarantee of ever winning. Connect() starts the poll thread before the
+  // version query runs, so the query was blocking for minutes at a time and
+  // sometimes indefinitely - the whole machine appeared to hang after "Board N
+  // found." with nothing to show for it.
+  //
+  // Fairness cannot be asked of the mutex, so it is arranged around it: an
+  // admin caller raises this before blocking, and the poll loop stands down
+  // instead of competing. Handover is then bounded by one pass rather than
+  // left to chance.
+  std::atomic<uint32_t> m_adminPortWaiters{0};
+
+  // Blocks the poll loop out of the port, then takes it.
+  class AdminPortLock {
+   public:
+    explicit AdminPortLock(RS485Comm* comm) : m_comm(comm) {
+      m_comm->m_adminPortWaiters.fetch_add(1, std::memory_order_release);
+      try {
+        m_comm->m_portMutex.lock();
+      } catch (...) {
+        // The destructor does not run for a constructor that threw, so the
+        // count has to come back down here. Leaving it raised would stand the
+        // poll loop down for the life of the process - the exact failure this
+        // class exists to prevent.
+        m_comm->m_adminPortWaiters.fetch_sub(1, std::memory_order_release);
+        throw;
+      }
+    }
+    ~AdminPortLock() {
+      m_comm->m_portMutex.unlock();
+      m_comm->m_adminPortWaiters.fetch_sub(1, std::memory_order_release);
+    }
+    AdminPortLock(const AdminPortLock&) = delete;
+    AdminPortLock& operator=(const AdminPortLock&) = delete;
+
+   private:
+    RS485Comm* m_comm;
+  };
   std::atomic<uint32_t> m_boardsLostConfigurationCount { 0 };
   std::mutex m_outputQueueMutex;
   std::mutex m_switchesQueueMutex;

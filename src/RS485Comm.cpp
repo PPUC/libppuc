@@ -390,6 +390,16 @@ void RS485Comm::Run() {
     LogMessage("RS485Comm run thread starting");
 
     while (!m_stopRequested) {
+      // Stand aside for an admin exchange rather than race it for the port.
+      // Every sleep below happens while holding the mutex, so competing for it
+      // is a contest this loop wins almost every time - which is starvation,
+      // not priority. Checked before acquiring, so the wait is bounded by the
+      // pass already in flight.
+      if (m_adminPortWaiters.load(std::memory_order_acquire) > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+
       // Serial port access is exclusive for the length of one pass.
       //
       // Connect() starts this thread before the host has finished its admin
@@ -1660,7 +1670,7 @@ void RS485Comm::SettleBusBeforeAdmin() {
 
 PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
                                               uint32_t timeoutMs) {
-  std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
+  AdminPortLock portLock(this);
   PPUCBoardVersion result;
   result.board = board;
   if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
@@ -1771,7 +1781,7 @@ PPUCBoardVersion RS485Comm::QueryBoardVersion(uint8_t board,
 }
 
 PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
-  std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
+  AdminPortLock portLock(this);
   PPUCBoardStats result;
   result.board = board;
   if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
@@ -1916,7 +1926,7 @@ PPUCFirmwareUpdateResult RS485Comm::UpdateBoardFirmware(
   // Held for the whole transfer: a poll pass landing between a chunk and its
   // ack would eat the ack and fail the update. QueryBoardVersion() below takes
   // it recursively, hence the recursive mutex.
-  std::lock_guard<std::recursive_mutex> portLock(m_portMutex);
+  AdminPortLock portLock(this);
   PPUCFirmwareUpdateResult result;
   result.board = board;
 
