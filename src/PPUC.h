@@ -116,7 +116,14 @@ class PPUCAPI PPUC {
   // chain, so nothing arbitrates who replies to a broadcast. Entries for
   // boards that did not answer are returned with responded == false rather
   // than omitted, so a missing board is visible instead of silently absent.
-  std::vector<PPUCBoardVersion> QueryBoardVersions();
+  // Asks every configured, non-skipped board for its firmware version.
+  //
+  // waitForBoardsMs keeps asking the boards that have not answered until they
+  // all have or the time is up. Needed when the boards have only just been
+  // reset: they take a moment longer than the reset wait to come back, and a
+  // single round then finds none of them - which reads exactly like boards
+  // without the admin protocol, and silently prevents every update.
+  std::vector<PPUCBoardVersion> QueryBoardVersions(uint32_t waitForBoardsMs = 0);
 
   // Each board's own transport counters, for diagnosing a board that stopped
   // answering. Safe to call at any time; it is an out-of-band admin exchange.

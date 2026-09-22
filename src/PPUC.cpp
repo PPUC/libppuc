@@ -1,5 +1,9 @@
 #include "PPUC.h"
 
+#include <chrono>
+#include <map>
+#include <thread>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -2157,9 +2161,8 @@ std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {
   return stats;
 }
 
-std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions() {
+std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions(uint32_t waitForBoardsMs) {
   m_pRS485Comm->SettleBusBeforeAdmin();
-  std::vector<PPUCBoardVersion> versions;
 
   std::set<uint8_t> boards;
   const YAML::Node& configured = m_ppucConfig["boards"];
@@ -2172,8 +2175,34 @@ std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions() {
     }
   }
 
+  // Keyed by board so a board that answers in a later round keeps its place.
+  std::map<uint8_t, PPUCBoardVersion> answers;
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(waitForBoardsMs);
+  while (true) {
+    bool allAnswered = true;
+    for (uint8_t board : boards) {
+      auto it = answers.find(board);
+      if (it != answers.end() && it->second.responded) {
+        continue;
+      }
+      answers[board] = m_pRS485Comm->QueryBoardVersion(board);
+      if (!answers[board].responded) {
+        allAnswered = false;
+      }
+    }
+    if (allAnswered || std::chrono::steady_clock::now() >= deadline) {
+      break;
+    }
+    // A board still booting is silent; give it a moment rather than spending
+    // the whole wait hammering the bus.
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  }
+
+  std::vector<PPUCBoardVersion> versions;
+  versions.reserve(answers.size());
   for (uint8_t board : boards) {
-    versions.push_back(m_pRS485Comm->QueryBoardVersion(board));
+    versions.push_back(answers[board]);
   }
   return versions;
 }
