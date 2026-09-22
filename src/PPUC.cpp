@@ -1239,7 +1239,12 @@ void PPUC::SendLedConfigBlock(const YAML::Node& items, uint32_t type,
   }
 }
 
+void PPUC::SetBeforeConfigurationHook(std::function<bool()> hook) {
+  m_beforeConfigurationHook = std::move(hook);
+}
+
 bool PPUC::Connect() {
+  m_stoppedBeforeConfiguration = false;
   try {
     ValidatePpucConfiguration(m_ppucConfig);
   } catch (const std::exception& e) {
@@ -1979,10 +1984,23 @@ bool PPUC::Connect() {
     }
   };
 
+  // Both paths below have waited for the boards to boot by the time they call
+  // this, and none of them is configured yet.
+  auto runBeforeConfigurationHook = [this]() -> bool {
+    if (!m_beforeConfigurationHook || m_beforeConfigurationHook()) {
+      return true;
+    }
+    m_stoppedBeforeConfiguration = true;
+    return false;
+  };
+
   if (m_forceHardReset) {
     printf("PPUC: starting board configuration using forced hard reset.\n");
     if (!m_pRS485Comm->ResetBoards()) {
       printf("PPUC: forced hard reset could not be started; startup aborted.\n");
+      return false;
+    }
+    if (!runBeforeConfigurationHook()) {
       return false;
     }
     if (runStartupAttempt()) {
@@ -2014,6 +2032,9 @@ bool PPUC::Connect() {
   printf("PPUC: starting board configuration using soft restart.\n");
   if (!m_pRS485Comm->RestartBoards()) {
     printf("PPUC: soft restart could not be started; startup aborted.\n");
+    return false;
+  }
+  if (!runBeforeConfigurationHook()) {
     return false;
   }
   if (runStartupAttempt()) {

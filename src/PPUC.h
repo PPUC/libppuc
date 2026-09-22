@@ -22,6 +22,7 @@
 #include "PPUC_structs.h"
 #include "yaml-cpp/yaml.h"
 
+#include <functional>
 #include <set>
 #include <unordered_map>
 
@@ -74,6 +75,18 @@ class PPUCAPI PPUC {
   const char* GetRom();
   void SetSerial(const char* serial);
   const char* GetSerial();
+  // Runs once the boards have been reset and have booted, before any of them
+  // is configured. Returning false stops Connect(), which then returns false
+  // with WasStoppedBeforeConfiguration() set.
+  //
+  // This is where firmware is checked and updated. Doing it after
+  // configuration meant a board that could not be configured could not be
+  // updated either - so firmware too old or too broken to accept the
+  // configuration was the one firmware the update could never replace. The
+  // admin protocol needs no session, and nothing else is on the bus yet.
+  void SetBeforeConfigurationHook(std::function<bool()> hook);
+  bool WasStoppedBeforeConfiguration() const { return m_stoppedBeforeConfiguration; }
+
   bool Connect();
   void Disconnect();
   void StartUpdates();
@@ -149,6 +162,8 @@ class PPUCAPI PPUC {
   uint8_t m_coilHoldFrames = 3;
   bool m_disableFastFlipForTests = false;
   bool m_forceHardReset = false;
+  std::function<bool()> m_beforeConfigurationHook;
+  bool m_stoppedBeforeConfiguration = false;
   std::set<uint8_t> m_skippedBoards;
 
   void SendLedConfigBlock(const YAML::Node& items, uint32_t type, uint8_t board,
