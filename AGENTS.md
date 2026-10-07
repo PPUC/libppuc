@@ -76,8 +76,8 @@ cmake --build build
 
 `src/PPUC.cpp` owns both parsing and schema validation. Top-level sections:
 `ppucVersion`, `rom`, `serialPort`, `platform`, `debug`, `boards`,
-`dipSwitches`, `switches`, `switchMatrix`, `switchGroups`, `pwmOutput`,
-`ledStripes`, `mechs`. Per-device `effects` blocks carry effect and trigger
+`dipSwitches`, `switches`, `switchMatrix`, `lampMatrix`, `switchGroups`,
+`pwmOutput`, `ledStripes`, `mechs`. Per-device `effects` blocks carry effect and trigger
 configuration.
 
 Optional metadata parsed and exposed here:
@@ -108,6 +108,26 @@ Optional metadata parsed and exposed here:
   burst of changes drains.
 - `debounce` + `debounceMode` → `CONFIG_TOPIC_DEBOUNCE_TIME` /
   `CONFIG_TOPIC_MODE`.
+- `type` on boards → the hardware the board is, by `ppuc::v2::BoardTypeName()`
+  (`IO_16_8_1`, `IO_16x8_matrix`, `Out_8x10`, `Opto_16`). Optional, and
+  `IO_16_8_1` when absent. A `port` is a GPIO number and what a GPIO is depends
+  on the board, so `ValidateBoardHardware()` checks every switch, PWM output,
+  LED string and matrix against the board's profile in
+  `io-boards/PPUCBoardTypes.h` - staged from `../io-boards` like the protocol
+  header, and the same table the firmware refuses a bad config from. It also
+  refuses two PWM outputs of one board that share an RP2040 PWM channel (GPIOs
+  sixteen apart). `GetConfiguredBoardType()` exposes the type so an application
+  can compare it with what `QueryBoardVersions()` reports.
+- `switchMatrix` → on an `IO_16_8_1` the 4-column matrix on its inputs (4 or 8
+  rows); on an `IO_16x8_matrix` the strobed matrix of 8 columns by 1-16 rows,
+  which takes all sixteen inputs and all eight outputs of that board. `port` is
+  the position `column * rows + row` in both.
+- `lampMatrix` → `board`, `rows` (1-10) and `lamps` (`description`, `port`,
+  `number`), sent as `CONFIG_TOPIC_LAMP_MATRIX`. Only an `Out_8x10` drives one:
+  8 high-side columns by up to 10 low-side rows, `port` again
+  `column * rows + row`. A `pwmOutput` of type `lamp` on that board is a lamp
+  wired to a single output and may not sit on a line the matrix uses; the board
+  has no PWM, so `power` is ignored and no other output type is accepted.
 - `switchGroups` → named groups exposed to the Lua rules engine. The group
   `buttons` is built in from `button: true` switches and cannot be overridden.
 

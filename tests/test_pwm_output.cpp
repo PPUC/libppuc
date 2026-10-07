@@ -357,7 +357,7 @@ TEST_CASE("a WS2812 flasher is not a pwmOutput entry at all") {
 ledStripes:
   -
     board: 2
-    port: 5
+    port: 29
     ledType: GRB
     brightness: 128
     amount: 60

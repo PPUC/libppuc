@@ -46,6 +46,7 @@ if [ "${IO_BOARDS_EXPECTED_SHA}" != "${IO_BOARDS_FOUND_SHA}" ] || [ "${IO_BOARDS
    cp -a io-boards/src/PPUCTimings.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
    cp -a io-boards/src/PPUCPlatforms.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
    cp -a io-boards/src/PPUCProtocolV2.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
+   cp -a io-boards/src/PPUCBoardTypes.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
    cp -a io-boards/src/EventDispatcher/Event.h ${PROJECT_SOURCE_ROOT}/third-party/include/io-boards/
 
    # The protocol conformance suite travels with the header it tests, so both

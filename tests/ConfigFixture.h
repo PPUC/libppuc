@@ -61,6 +61,9 @@ class TempYaml {
 //
 // The required root fields are enforced in ValidatePpucConfiguration():
 // debug, rom, serialPort, platform, coinDoorClosedSwitch, gameOnSolenoid.
+//
+// Ports are GPIO numbers, as the exporter writes them, and are checked against
+// the board's hardware: 3 and 4 are the first two inputs of an IO_16_8_1.
 inline std::string ValidConfig() {
   return R"YAML(
 ppucVersion: 1
@@ -82,7 +85,7 @@ switches:
     description: 'START BUTTON'
     number: 11
     board: 1
-    port: 1
+    port: 3
     debounce: 5
     debounceMode: standard
     button: true
@@ -90,7 +93,7 @@ switches:
     description: 'OUTHOLE'
     number: 12
     board: 1
-    port: 2
+    port: 4
     debounce: 5
     debounceMode: standard
 )YAML";

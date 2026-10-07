@@ -16,6 +16,7 @@
 
 #include "Adafruit_NeoPixel.h"
 #include "RS485Comm.h"
+#include "io-boards/PPUCBoardTypes.h"
 #include "io-boards/PPUCProtocolV2.h"
 #include "io-boards/Event.h"
 #include "io-boards/PPUCPlatforms.h"
@@ -443,6 +444,251 @@ void ValidateNamedEffectTriggerFields(const YAML::Node& effect,
   }
 }
 
+// The board type a `boards` entry names, or IO_16_8_1 when it names none.
+uint8_t ConfiguredBoardType(const YAML::Node& board) {
+  if (!board || !board["type"]) {
+    return ppuc::v2::kBoardTypeIo16_8_1;
+  }
+  return ppuc::v2::BoardTypeFromName(
+      board["type"].as<std::string>().c_str());
+}
+
+[[noreturn]] void ThrowHardwareError(const YAML::Node& item,
+                                     const std::string& path,
+                                     const std::string& problem) {
+  throw std::runtime_error("invalid YAML configuration: " +
+                           ConfigItemContext(item, path) + ": " + problem);
+}
+
+std::string BoardLabel(uint8_t board, uint8_t type) {
+  const char* name = ppuc::v2::BoardTypeName(type);
+  return "board " + std::to_string(static_cast<unsigned>(board)) + " (" +
+         (name ? name : "unknown") + ")";
+}
+
+// Checks every device against the hardware of the board it is configured on.
+//
+// A port in this file is a GPIO number, and what a GPIO is depends on the
+// board: GPIO 19 is a coil driver on an IO_16_8_1, a matrix strobe on an
+// IO_16x8_matrix and a lamp column on an Out_8x10. Nothing used to check, so a
+// device on the wrong kind of pin was sent to the board and silently drove
+// whatever was there. The firmware refuses these as well, from the same table
+// (io-boards/PPUCBoardTypes.h); refusing here means the machine does not start
+// half configured and the message says which entry is wrong.
+void ValidateBoardHardware(const YAML::Node& config) {
+  std::unordered_map<uint8_t, ppuc::board::Profile> profiles;
+
+  size_t boardIndex = 0;
+  for (YAML::Node board : config["boards"]) {
+    const std::string path = "boards[" + std::to_string(boardIndex++) + "]";
+    const uint8_t type = ConfiguredBoardType(board);
+    if (type == ppuc::v2::kBoardTypeUnknown) {
+      ThrowHardwareError(board, path,
+                         "unknown board type '" +
+                             board["type"].as<std::string>() + "'");
+    }
+    profiles[board["number"].as<uint8_t>()] = ppuc::board::profileFor(type);
+  }
+
+  // A device on a board `boards` does not list is judged as an IO_16_8_1, as
+  // it always was.
+  auto profileOf = [&profiles](uint8_t board) {
+    const auto it = profiles.find(board);
+    return it != profiles.end()
+               ? it->second
+               : ppuc::board::profileFor(ppuc::v2::kBoardTypeIo16_8_1);
+  };
+
+  // --- Switch matrix ------------------------------------------------------
+  bool strobedMatrixInUse = false;
+  uint8_t strobedMatrixBoard = 0;
+  const YAML::Node switchMatrix = config["switchMatrix"];
+  if (switchMatrix) {
+    const uint8_t board = switchMatrix["board"].as<uint8_t>();
+    const ppuc::board::Profile profile = profileOf(board);
+    const std::string label = BoardLabel(board, profile.type);
+    const uint8_t rows = switchMatrix["rows"].as<uint8_t>();
+    uint32_t positions = 0;
+
+    if (profile.has(ppuc::board::kCapStrobedSwitchMatrix)) {
+      if (rows == 0 || rows > profile.strobedMatrix.maxReturns) {
+        ThrowHardwareError(switchMatrix, "switchMatrix",
+                           label + " supports 1 to " +
+                               std::to_string(profile.strobedMatrix.maxReturns) +
+                               " rows");
+      }
+      positions = static_cast<uint32_t>(profile.strobedMatrix.strobes) * rows;
+      strobedMatrixInUse = HasSequenceItems(switchMatrix["switches"]);
+      strobedMatrixBoard = board;
+    } else if (profile.has(ppuc::board::kCapSwitchMatrix)) {
+      if (rows >= 16 ||
+          (profile.matrix.supportedRowsMask & (1u << rows)) == 0) {
+        ThrowHardwareError(switchMatrix, "switchMatrix",
+                           label + " supports a 4 column matrix with 4 or 8 "
+                                   "rows");
+      }
+      positions = static_cast<uint32_t>(profile.matrix.columns) * rows;
+    } else {
+      ThrowHardwareError(switchMatrix, "switchMatrix",
+                         label + " cannot scan a switch matrix");
+    }
+
+    size_t index = 0;
+    for (YAML::Node item : switchMatrix["switches"]) {
+      const std::string path =
+          "switchMatrix.switches[" + std::to_string(index++) + "]";
+      if (item["port"].as<uint32_t>() >= positions) {
+        ThrowHardwareError(item, path,
+                           "position " +
+                               std::to_string(item["port"].as<uint32_t>()) +
+                               " is outside the matrix; " + label + " has " +
+                               std::to_string(positions) + " with " +
+                               std::to_string(rows) + " rows");
+      }
+    }
+  }
+
+  // --- Dedicated switches -------------------------------------------------
+  size_t index = 0;
+  for (YAML::Node item : config["switches"]) {
+    const std::string path = "switches[" + std::to_string(index++) + "]";
+    const uint8_t board = item["board"].as<uint8_t>();
+    const uint32_t port = item["port"].as<uint32_t>();
+    const ppuc::board::Profile profile = profileOf(board);
+    const std::string label = BoardLabel(board, profile.type);
+    if (port > 31 || !profile.allowsSwitch(static_cast<uint8_t>(port))) {
+      ThrowHardwareError(item, path,
+                         "port " + std::to_string(port) +
+                             " is not a switch input on " + label);
+    }
+    if (strobedMatrixInUse && board == strobedMatrixBoard) {
+      ThrowHardwareError(item, path,
+                         "every input of " + label +
+                             " is a return of its switch matrix");
+    }
+  }
+
+  // --- Lamp matrix --------------------------------------------------------
+  // GPIOs the matrix lamps use per board, to keep single-output lamps off
+  // them: a line of the matrix switches with the strobe.
+  uint32_t lampMatrixLines = 0;
+  uint8_t lampMatrixBoard = 0;
+  bool haveLampMatrix = false;
+  const YAML::Node lampMatrix = config["lampMatrix"];
+  if (lampMatrix) {
+    const uint8_t board = lampMatrix["board"].as<uint8_t>();
+    const ppuc::board::Profile profile = profileOf(board);
+    const std::string label = BoardLabel(board, profile.type);
+    const uint8_t rows = lampMatrix["rows"].as<uint8_t>();
+    if (!profile.has(ppuc::board::kCapLampMatrix)) {
+      ThrowHardwareError(lampMatrix, "lampMatrix",
+                         label + " cannot drive a lamp matrix");
+    }
+    if (rows == 0 || rows > profile.lampMatrix.rows) {
+      ThrowHardwareError(lampMatrix, "lampMatrix",
+                         label + " supports 1 to " +
+                             std::to_string(profile.lampMatrix.rows) +
+                             " rows");
+    }
+    haveLampMatrix = true;
+    lampMatrixBoard = board;
+    const uint32_t positions =
+        static_cast<uint32_t>(profile.lampMatrix.columns) * rows;
+    size_t lampIndex = 0;
+    for (YAML::Node item : lampMatrix["lamps"]) {
+      const std::string path =
+          "lampMatrix.lamps[" + std::to_string(lampIndex++) + "]";
+      const uint32_t position = item["port"].as<uint32_t>();
+      if (position >= positions) {
+        ThrowHardwareError(item, path,
+                           "position " + std::to_string(position) +
+                               " is outside the matrix; " + label + " has " +
+                               std::to_string(positions) + " with " +
+                               std::to_string(rows) + " rows");
+      }
+      if (item["number"].as<uint32_t>() == 0) {
+        ThrowHardwareError(item, path, "lamp number 0 is not a lamp");
+      }
+      lampMatrixLines |=
+          ppuc::board::pinBit(profile.lampMatrix.columnPins[position / rows]) |
+          ppuc::board::pinBit(profile.lampMatrix.rowPins[position % rows]);
+    }
+  }
+
+  // --- PWM outputs --------------------------------------------------------
+  std::unordered_map<uint8_t, std::vector<uint8_t>> pwmPortsByBoard;
+  index = 0;
+  for (YAML::Node item : config["pwmOutput"]) {
+    const std::string path = "pwmOutput[" + std::to_string(index++) + "]";
+    const uint8_t board = item["board"].as<uint8_t>();
+    const uint32_t port = item["port"].as<uint32_t>();
+    const std::string type = item["type"].as<std::string>();
+    const ppuc::board::Profile profile = profileOf(board);
+    const std::string label = BoardLabel(board, profile.type);
+    const uint8_t pin = port > 31 ? 0xFF : static_cast<uint8_t>(port);
+
+    if (profile.has(ppuc::board::kCapLampMatrix)) {
+      // Lamp drivers with no PWM behind them: a lamp wired to one output is
+      // fine, anything else is not.
+      if (type != "lamp") {
+        ThrowHardwareError(item, path,
+                           label + " drives lamps only, not a " + type);
+      }
+      if (!profile.allowsDirectLamp(pin)) {
+        ThrowHardwareError(item, path,
+                           "port " + std::to_string(port) +
+                               " is not an output on " + label);
+      }
+      if (haveLampMatrix && board == lampMatrixBoard &&
+          (lampMatrixLines & ppuc::board::pinBit(pin)) != 0) {
+        ThrowHardwareError(item, path,
+                           "port " + std::to_string(port) +
+                               " is a line of the lamp matrix on " + label);
+      }
+      continue;
+    }
+
+    if (!profile.allowsPwm(pin)) {
+      ThrowHardwareError(item, path,
+                         "port " + std::to_string(port) +
+                             " is not an output on " + label);
+    }
+    if (strobedMatrixInUse && board == strobedMatrixBoard &&
+        profile.isStrobePin(pin)) {
+      ThrowHardwareError(item, path,
+                         "port " + std::to_string(port) +
+                             " is a strobe of the switch matrix on " + label);
+    }
+    for (uint8_t other : pwmPortsByBoard[board]) {
+      // Two GPIOs sixteen apart are one PWM channel on the RP2040: whatever
+      // is written to one comes out of both.
+      if (ppuc::board::sharesPwmChannel(pin, other)) {
+        ThrowHardwareError(item, path,
+                           "port " + std::to_string(port) + " shares its PWM "
+                           "channel with port " + std::to_string(other) +
+                               " on " + label +
+                               "; driving one would drive the other");
+      }
+    }
+    pwmPortsByBoard[board].push_back(pin);
+  }
+
+  // --- LED strings --------------------------------------------------------
+  index = 0;
+  for (YAML::Node item : config["ledStripes"]) {
+    const std::string path = "ledStripes[" + std::to_string(index++) + "]";
+    const uint8_t board = item["board"].as<uint8_t>();
+    const uint32_t port = item["port"].as<uint32_t>();
+    const ppuc::board::Profile profile = profileOf(board);
+    if (port > 31 || !profile.allowsLedString(static_cast<uint8_t>(port))) {
+      ThrowHardwareError(item, path,
+                         "port " + std::to_string(port) +
+                             " is not the LED output of " +
+                             BoardLabel(board, profile.type));
+    }
+  }
+}
+
 void ValidatePpucConfiguration(const YAML::Node& config) {
   ValidateRequiredMap(config, "root");
   ValidateRequiredField<bool>(config, "root", "debug");
@@ -462,6 +708,9 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
     ValidateRequiredField<bool>(board, path, "pollEvents");
     ValidateOptionalField<bool>(board, path, "slowSwitches");
     ValidateOptionalField<bool>(board, path, "virtual");
+    // Which hardware this is. Optional, and IO_16_8_1 when absent: that is
+    // what every board was before the others existed.
+    ValidateOptionalField<std::string>(board, path, "type");
   }
 
   const YAML::Node switchMatrix = config["switchMatrix"];
@@ -478,6 +727,22 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
           ValidateRequiredField<uint32_t>(item, itemPath, "port");
           ValidateRequiredField<uint32_t>(item, itemPath, "number");
           ValidateOptionalField<bool>(item, itemPath, "button");
+        });
+  }
+
+  // A strobed lamp matrix: high-side columns by low-side rows. `port` is the
+  // zero-based position column * rows + row, as in switchMatrix.
+  const YAML::Node lampMatrix = config["lampMatrix"];
+  if (lampMatrix) {
+    ValidateRequiredMap(lampMatrix, "lampMatrix");
+    ValidateRequiredField<uint8_t>(lampMatrix, "lampMatrix", "board");
+    ValidateRequiredField<uint8_t>(lampMatrix, "lampMatrix", "rows");
+    ValidateOptionalItems(
+        lampMatrix, "lamps", "lampMatrix",
+        [](const YAML::Node& item, const std::string& itemPath) {
+          ValidateRequiredField<std::string>(item, itemPath, "description");
+          ValidateRequiredField<uint8_t>(item, itemPath, "port");
+          ValidateRequiredField<uint8_t>(item, itemPath, "number");
         });
   }
 
@@ -709,6 +974,8 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                           ValidateLedConfigBlock(item, "flashers", itemPath);
                           ValidateLedConfigBlock(item, "gi", itemPath);
                         });
+
+  ValidateBoardHardware(config);
 }
 
 std::unordered_map<std::string, std::vector<uint16_t>> ParseSwitchGroups(
@@ -922,6 +1189,15 @@ void PPUC::SetForceHardReset(bool forceHardReset) {
 }
 
 bool PPUC::GetDebug() { return m_debug; }
+
+uint8_t PPUC::GetConfiguredBoardType(uint8_t board) {
+  for (YAML::Node n_board : m_ppucConfig["boards"]) {
+    if (n_board["number"] && n_board["number"].as<uint8_t>() == board) {
+      return ConfiguredBoardType(n_board);
+    }
+  }
+  return ppuc::v2::kBoardTypeUnknown;
+}
 
 void PPUC::SetRom(const char* rom) { strcpy(m_rom, rom); }
 
@@ -1416,6 +1692,16 @@ bool PPUC::Connect() {
       }
     }
 
+    const YAML::Node& lampMatrix = m_ppucConfig["lampMatrix"];
+    const bool sendLampMatrix =
+        lampMatrix && HasSequenceItems(lampMatrix["lamps"]) &&
+        !isSkippedBoard(lampMatrix["board"].as<uint8_t>());
+    if (sendLampMatrix) {
+      for (YAML::Node n_lamp : lampMatrix["lamps"]) {
+        lampNumbers.insert(n_lamp["number"].as<uint16_t>());
+      }
+    }
+
     const YAML::Node& ledStripes = m_ppucConfig["ledStripes"];
     if (HasSequenceItems(ledStripes)) {
       for (YAML::Node n_ledStripe : ledStripes) {
@@ -1712,6 +1998,45 @@ bool PPUC::Connect() {
                      n_pwmOutput["description"].as<std::string>(),
                      n_pwmOutput["ballSearch"] &&
                          n_pwmOutput["ballSearch"].as<bool>()));
+
+        if (AbortConfigurationEarly()) {
+          return false;
+        }
+      }
+    }
+
+    if (AbortConfigurationEarly()) {
+      return false;
+    }
+
+    // Send lamp matrix configuration to I/O boards
+    if (sendLampMatrix) {
+      const uint8_t lampBoard = lampMatrix["board"].as<uint8_t>();
+      index = 0;
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          lampBoard, (uint8_t)CONFIG_TOPIC_LAMP_MATRIX, index++,
+          (uint8_t)CONFIG_TOPIC_NUM_ROWS, lampMatrix["rows"].as<uint8_t>()));
+
+      for (YAML::Node n_lamp : lampMatrix["lamps"]) {
+        if (m_debug) {
+          // @todo user logger
+          printf("Description: %s\n",
+                 n_lamp["description"].as<std::string>().c_str());
+        }
+
+        index = 0;
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            lampBoard, (uint8_t)CONFIG_TOPIC_LAMP_MATRIX, index++,
+            (uint8_t)CONFIG_TOPIC_PORT, n_lamp["port"].as<uint32_t>()));
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            lampBoard, (uint8_t)CONFIG_TOPIC_LAMP_MATRIX, index++,
+            (uint8_t)CONFIG_TOPIC_NUMBER, n_lamp["number"].as<uint32_t>()));
+
+        m_lamps.push_back(PPUCLamp(lampBoard, n_lamp["port"].as<uint8_t>(),
+                                   (uint8_t)LED_TYPE_LAMP,
+                                   n_lamp["number"].as<uint8_t>(),
+                                   n_lamp["description"].as<std::string>(),
+                                   0));
 
         if (AbortConfigurationEarly()) {
           return false;

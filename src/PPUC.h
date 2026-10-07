@@ -71,6 +71,11 @@ class PPUCAPI PPUC {
   void SetDisableFastFlipForTests(bool disableFastFlipForTests);
   void SetForceHardReset(bool forceHardReset);
   bool GetDebug();
+  // The ppuc::v2::BoardType the configuration gives a board, or 0 when the
+  // configuration does not list it. Compare with what the board itself reports
+  // in QueryBoardVersions(): a pin map is board-specific, so a configuration
+  // written for one type must not be sent to another.
+  uint8_t GetConfiguredBoardType(uint8_t board);
   void SetRom(const char* rom);
   const char* GetRom();
   void SetSerial(const char* serial);

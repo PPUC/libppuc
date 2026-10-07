@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 KNOWN_ABSENT = {
     "coilGiMappings": "optional, SYS11 only; no exported game uses it yet",
     "switchMatrix": "optional; only games with an original matrix harness",
+    "lampMatrix": "optional; only games driving an original lamp matrix from an Out_8x10",
     "dualWinding": "optional; games must be re-exported since config-tool gained the field",
     "eosSwitch": "optional; same as dualWinding",
     "holdWinding": "optional; no game has a separately driven flipper pair yet",
