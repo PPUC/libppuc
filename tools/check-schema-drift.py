@@ -45,6 +45,7 @@ KNOWN_ABSENT = {
     "holdWinding": "optional; no game has a separately driven flipper pair yet",
     "stopSwitches": "optional; no exported game has a flipper EOS or a motor yet",
     "slowSwitches": "optional; no game has marked a board yet",
+    "virtual": "optional; no exported game declares a board that is not built",
     "options": "optional LED effect field",
     "fadeRate": "optional LED effect field",
     "gamma": "optional LED strip field",
