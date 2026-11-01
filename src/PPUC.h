@@ -99,6 +99,11 @@ class PPUCAPI PPUC {
 
   void SetSolenoidState(int number, int state);
   void SetLampState(int number, int state);
+  // Motors whose speed the ROM sets by pulsing them. The host measures it and
+  // passes it on with SetCoilPowerScale.
+  std::vector<uint16_t> GetRomSpeedCoils() const;
+  // Scales a running motor's power, 0-255 of what it is configured with.
+  void SetCoilPowerScale(int number, uint8_t scale);
   void SetGIState(int string, int brightness);
   void SetSwitchState(int number, int state);
   void TriggerEvent(uint8_t source, int number, int value);

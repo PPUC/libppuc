@@ -276,6 +276,35 @@ TEST_CASE("a power winding still needs its own bound") {
 // travel. Two per output is what the firmware stores, so a third has to be
 // refused here rather than silently dropped on the board.
 
+TEST_CASE("ignoreGameOn must be a boolean") {
+  const auto yaml = UnprotectedCoil() + "    ignoreGameOn: sometimes\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("ignoreGameOn") != std::string::npos);
+}
+
+TEST_CASE("ignoreGameOn is not thermal protection") {
+  // It says when the output may run, not for how long.
+  const auto yaml = UnprotectedCoil() + "    ignoreGameOn: true\n";
+
+  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") !=
+        std::string::npos);
+}
+
+TEST_CASE("romSpeed must be a boolean") {
+  const auto yaml = UnprotectedCoil() + "    romSpeed: sometimes\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("romSpeed") != std::string::npos);
+}
+
+TEST_CASE("romSpeed is refused on a coil") {
+  const auto yaml = UnprotectedCoil() + "    romSpeed: true\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("only for a motor") != std::string::npos);
+}
+
 TEST_CASE("stopSwitches is optional") {
   CHECK(LoadAndCaptureError(WithPwm()).empty());
 }

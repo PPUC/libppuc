@@ -101,6 +101,13 @@ Optional metadata parsed and exposed here:
   after it lands on the next output. Deliberately not counted as thermal
   protection: a stop switch can be unplugged or misadjusted, and WPC itself
   paired one with a timeout rather than trusting it alone.
+- `ignoreGameOn: true` on PWM outputs → the board's game-on gate does not apply
+  to this coil or motor, sent as `CONFIG_TOPIC_IGNORE_GAME_ON` before
+  `CONFIG_TOPIC_TYPE`. For what a ROM drives with no game running, such as Dirty
+  Harry's gun search at boot. The coin door still cuts it.
+- `romSpeed: true` on a motor → the ROM varies its speed by pulsing it. libppuc
+  only reports them through `GetRomSpeedCoils`: `ppuc` measures the duty and calls
+  `SetCoilPowerScale`, sent as `EVENT_SOURCE_POWER_SCALE` in a `kFrameTrigger`.
 - `slowSwitches: true` on boards → the board carries nothing latency-critical
   (start button, coin door, tilt), so it is sorted to the front of the token
   ring and polled on every eighth chain instead of every chain. Skipping is

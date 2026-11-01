@@ -299,6 +299,17 @@ void ValidateOptionalSequence(const YAML::Node& node,
 // it - a stop switch nobody notices is missing is a stop that does not happen.
 constexpr size_t kMaxStopSwitchesPerOutput = 2;
 
+// A ROM varying a motor's speed. Nothing but a motor is scaled on the board: a
+// coil at part of its power would just be a coil that does not work.
+void ValidateRomSpeed(const YAML::Node& item, const std::string& itemPath) {
+  ValidateOptionalField<bool>(item, itemPath, "romSpeed");
+  if (item["romSpeed"] && item["romSpeed"].as<bool>() &&
+      item["type"].as<std::string>() != "motor") {
+    throw std::runtime_error("invalid YAML configuration: '" + itemPath +
+                             ".romSpeed' is only for a motor at " + itemPath);
+  }
+}
+
 void ValidateStopSwitches(const YAML::Node& item, const std::string& itemPath) {
   const YAML::Node& node = item["stopSwitches"];
   if (!node) {
@@ -867,6 +878,13 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                           // no bound. See WarnAboutUnprotectedSolenoids below.
                           ValidateOptionalField<bool>(
                               item, itemPath, "holdWinding");
+                          // Driven by the ROM with no game running, such as
+                          // Dirty Harry's gun search at boot. The board's
+                          // game-on gate does not apply to it; the coin door
+                          // still does.
+                          ValidateOptionalField<bool>(
+                              item, itemPath, "ignoreGameOn");
+                          ValidateRomSpeed(item, itemPath);
                           // Switches that cut this output the moment they
                           // close: a flipper's EOS, or the switch at each end
                           // of a motor's travel. The opposite polarity to
@@ -1914,6 +1932,13 @@ bool PPUC::Connect() {
               number));
         }
 
+        const bool ignoreGameOn = n_pwmOutput["ignoreGameOn"] &&
+                                  n_pwmOutput["ignoreGameOn"].as<bool>();
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
+            index++, (uint8_t)CONFIG_TOPIC_IGNORE_GAME_ON,
+            ignoreGameOn ? 1u : 0u));
+
         std::string c_type = n_pwmOutput["type"].as<std::string>();
         uint32_t type = ResolvePwmType(c_type);
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
@@ -2395,6 +2420,25 @@ void PPUC::SetSolenoidState(int number, int state) {
   uint16_t solNo = number;
   uint8_t solState = state == 0 ? 0 : 1;
   m_pRS485Comm->QueueEvent(new Event(EVENT_SOURCE_SOLENOID, solNo, solState));
+}
+
+std::vector<uint16_t> PPUC::GetRomSpeedCoils() const {
+  // From the configuration, not m_coils: that is only filled by Connect().
+  std::vector<uint16_t> coils;
+  const YAML::Node& outputs = m_ppucConfig["pwmOutput"];
+  if (HasSequenceItems(outputs)) {
+    for (const YAML::Node& output : outputs) {
+      if (output["romSpeed"] && output["romSpeed"].as<bool>()) {
+        coils.push_back(output["number"].as<uint16_t>());
+      }
+    }
+  }
+  return coils;
+}
+
+void PPUC::SetCoilPowerScale(int number, uint8_t scale) {
+  m_pRS485Comm->QueueEvent(
+      new Event(EVENT_SOURCE_POWER_SCALE, (uint16_t)number, scale));
 }
 
 void PPUC::SetLampState(int number, int state) {

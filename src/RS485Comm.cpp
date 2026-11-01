@@ -590,6 +590,7 @@ void RS485Comm::QueueEvent(Event* event) {
       delete event;
       return;
 
+    case EVENT_SOURCE_POWER_SCALE:
     case EVENT_SOURCE_EFFECT:
       {
         std::lock_guard<std::mutex> lock(m_eventQueueMutex);
