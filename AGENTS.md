@@ -113,6 +113,11 @@ Optional metadata parsed and exposed here:
   ring and polled on every eighth chain instead of every chain. Skipping is
   lossless — boards queue a snapshot per transition — but slows how fast a
   burst of changes drains.
+- `firstInChain: true` on boards → the board answers first among the boards
+  polled every chain (after any `slowSwitches` boards). A switch change on it
+  reaches the ROM early in the pass, so a coil fired in answer usually catches
+  the next output frame instead of waiting a whole extra pass. For the board
+  carrying the optos in front of a diverter. `slowSwitches` wins if both are set.
 - `debounce` + `debounceMode` → `CONFIG_TOPIC_DEBOUNCE_TIME` /
   `CONFIG_TOPIC_MODE`.
 - `type` on boards → the hardware the board is, by `ppuc::v2::BoardTypeName()`

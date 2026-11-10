@@ -718,6 +718,7 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
     ValidateRequiredField<uint8_t>(board, path, "number");
     ValidateRequiredField<bool>(board, path, "pollEvents");
     ValidateOptionalField<bool>(board, path, "slowSwitches");
+    ValidateOptionalField<bool>(board, path, "firstInChain");
     ValidateOptionalField<bool>(board, path, "virtual");
     // Which hardware this is. Optional, and IO_16_8_1 when absent: that is
     // what every board was before the others existed.
@@ -1568,6 +1569,8 @@ bool PPUC::Connect() {
     // slow boards in front - the poll loop can only skip a prefix.
     std::vector<uint8_t> switchBoards;
     std::vector<uint8_t> slowSwitchBoards;
+    // Boards that answer first among those polled every chain. See below.
+    std::vector<uint8_t> firstSwitchBoards;
     std::set<uint16_t> coilNumbers;
     std::set<uint16_t> lampNumbers;
     std::set<uint16_t> switchNumbers;
@@ -1647,8 +1650,20 @@ bool PPUC::Connect() {
 
       if (n_board["pollEvents"].as<bool>()) {
         m_pRS485Comm->RegisterSwitchBoard(boardNumber);
-        if (n_board["slowSwitches"] && n_board["slowSwitches"].as<bool>()) {
+        const bool slow =
+            n_board["slowSwitches"] && n_board["slowSwitches"].as<bool>();
+        const bool first =
+            n_board["firstInChain"] && n_board["firstInChain"].as<bool>();
+        if (slow) {
+          if (first) {
+            printf(
+                "PPUC: WARNING: board %u is marked both slowSwitches and "
+                "firstInChain; slowSwitches wins.\n",
+                (unsigned)boardNumber);
+          }
           slowSwitchBoards.push_back(boardNumber);
+        } else if (first) {
+          firstSwitchBoards.push_back(boardNumber);
         } else {
           switchBoards.push_back(boardNumber);
         }
@@ -2259,16 +2274,33 @@ bool PPUC::Connect() {
     // Slow boards first. The token ring is a linked list configured onto the
     // boards, so the host can enter it late but not skip a board in the
     // middle; putting them at the front is what makes them skippable at all.
-    // Their order relative to each other, and the order of the rest, is left
-    // as configured.
+    //
+    // Then the boards marked firstInChain, then the rest. A board's switches
+    // reach the host the moment its reply is read, but a coil the ROM fires in
+    // answer can only leave with the next output frame, which is sent once the
+    // whole chain has answered. A board that answers first gives the ROM the
+    // rest of the chain to decide, so its answer usually catches that frame.
+    // Answering last, it always misses it and waits a whole extra pass: an
+    // opto in front of a diverter is the case this exists for.
+    //
+    // Within each group the order is left as configured.
     const uint8_t slowSwitchBoardCount =
         static_cast<uint8_t>(slowSwitchBoards.size());
+    slowSwitchBoards.insert(slowSwitchBoards.end(), firstSwitchBoards.begin(),
+                            firstSwitchBoards.end());
     slowSwitchBoards.insert(slowSwitchBoards.end(), switchBoards.begin(),
                             switchBoards.end());
     switchBoards.swap(slowSwitchBoards);
     if (slowSwitchBoardCount > 0 && m_debug) {
       printf("PPUC: %u of %u polled board(s) carry only slow switches\n",
              (unsigned)slowSwitchBoardCount, (unsigned)switchBoards.size());
+    }
+    if (m_debug) {
+      printf("PPUC: switch chain order:");
+      for (const uint8_t board : switchBoards) {
+        printf(" %u", (unsigned)board);
+      }
+      printf("\n");
     }
     m_pRS485Comm->SetActiveSwitchBoards(switchBoards, slowSwitchBoardCount);
 
