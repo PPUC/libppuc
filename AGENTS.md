@@ -161,7 +161,8 @@ same shape.
 
 ### Shared wire format
 
-- UART baud `115200` (`ppuc::v2::kBaudRate`); planned move to `250000`.
+- UART baud `250000` (`ppuc::v2::kBaudRate`) since io-boards firmware 0.4.0;
+  boards on earlier firmware run at `115200` and are flashed over USB once.
 - Sync `0xA5`, 5-byte header (`sync`, `typeAndFlags`, `nextBoard`, `sequence`,
   `epoch`), CCITT-16 CRC over header + payload.
 - All multibyte values are written big-endian: `SetupFrame` 16-bit counts,

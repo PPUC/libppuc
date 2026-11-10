@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -366,6 +367,10 @@ class RS485Comm {
   };
   std::atomic<uint32_t> m_boardsLostConfigurationCount { 0 };
   std::mutex m_outputQueueMutex;
+  // Wakes the poll loop out of its idle wait between output frames when a coil
+  // changes. Both guarded by m_outputQueueMutex.
+  std::condition_variable m_outputWake;
+  bool m_coilWakePending = false;
   std::mutex m_switchesQueueMutex;
   std::mutex m_stateMutex;
   std::atomic<bool> m_stopRequested{false};

@@ -469,12 +469,32 @@ void RS485Comm::Run() {
           snapshot = m_outputSnapshots.front();
           m_outputSnapshots.pop();
           haveQueuedSnapshot = true;
+          // Whatever woke us is in this frame or one already queued behind it.
+          m_coilWakePending = false;
         }
       }
 
       if (!haveQueuedSnapshot) {
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(m_outputFrameIntervalMs));
+        // Idle until the next frame is due - unless a coil changes first. A
+        // coil the ROM fires in answer to a switch, a diverter in front of a
+        // moving ball, would otherwise wait out the rest of this interval
+        // before it even reached the wire. Lamps and GI do not wake it: they
+        // gain nothing perceptible from a few milliseconds and would turn an
+        // animation into back-to-back frames.
+        //
+        // Still holding the port mutex, as the plain sleep did.
+        std::unique_lock<std::mutex> lock(m_outputQueueMutex);
+        m_outputWake.wait_for(
+            lock, std::chrono::milliseconds(m_outputFrameIntervalMs),
+            [this] { return m_coilWakePending || m_stopRequested.load(); });
+        if (m_coilWakePending) {
+          m_coilWakePending = false;
+          if (!sendSwitchRefresh && !m_outputSnapshots.empty()) {
+            snapshot = m_outputSnapshots.front();
+            m_outputSnapshots.pop();
+            haveQueuedSnapshot = true;
+          }
+        }
       }
 
       uint8_t coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
@@ -546,6 +566,11 @@ void RS485Comm::QueueEvent(Event* event) {
           m_coilHoldFrames[it->second] = m_coilHoldFrameCount;
         }
         QueueOutputSnapshotLocked();
+        {
+          std::lock_guard<std::mutex> queueLock(m_outputQueueMutex);
+          m_coilWakePending = true;
+        }
+        m_outputWake.notify_one();
       } else {
         ReportUnmappedDevice(DeviceDomain::Coil, event->eventId);
       }
@@ -675,7 +700,11 @@ bool RS485Comm::SendOutputsOffFrame() {
 }
 
 void RS485Comm::Disconnect() {
-  m_stopRequested = true;
+  {
+    std::lock_guard<std::mutex> queueLock(m_outputQueueMutex);
+    m_stopRequested = true;
+  }
+  m_outputWake.notify_all();
 
   if (m_pThread && m_pThread->joinable()) {
     m_pThread->join();
