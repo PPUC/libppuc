@@ -1190,6 +1190,10 @@ void PPUC::SetSwitchReplyDelayUs(uint32_t delayUs) {
   m_pRS485Comm->SetSwitchReplyDelayUs(delayUs);
 }
 
+void PPUC::SetSwitchIdleRefreshPolls(uint32_t polls) {
+  m_switchIdleRefreshPolls = polls > 255 ? 255 : polls;
+}
+
 void PPUC::SetCoilHoldFrames(uint8_t holdFrames) {
   m_coilHoldFrames = holdFrames;
   m_pRS485Comm->SetCoilHoldFrames(holdFrames);
@@ -2322,6 +2326,10 @@ bool PPUC::Connect() {
       m_pRS485Comm->SendConfigEvent(new ConfigEvent(
           current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 1,
           (uint8_t)CONFIG_TOPIC_SWITCH_REPLY_DELAY_US, m_switchReplyDelayUs));
+      // Firmware before 0.4.2 ignores the key and keeps its own 100.
+      m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+          current, (uint8_t)CONFIG_TOPIC_SWITCH_CHAIN, 2,
+          (uint8_t)CONFIG_TOPIC_SWITCH_IDLE_REFRESH, m_switchIdleRefreshPolls));
     }
 
     if (AbortConfigurationEarly()) {

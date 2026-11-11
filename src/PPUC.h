@@ -55,6 +55,10 @@ class PPUCAPI PPUC {
   void SetTiltSwitch(uint8_t number) { m_tiltSwitch = number; }
   uint8_t GetTiltSwitch() const { return m_tiltSwitch; }
   void SetSwitchReplyDelayUs(uint32_t delayUs);
+  // Polls a board answers "no change" before it re-reads its switches and
+  // restarts its switch reader on its own. 0 turns that off; boards default to
+  // 100. Sent with the switch chain configuration.
+  void SetSwitchIdleRefreshPolls(uint32_t polls);
   // What the host currently believes a switch is, rather than what it last
   // changed to. Needed wherever resting state matters - a closed coin door,
   // balls already in the trough - because a machine that is not moving reports
@@ -175,6 +179,7 @@ class PPUCAPI PPUC {
   uint8_t m_gameOnSolenoid;
   uint8_t m_tiltSwitch = 0;
   uint32_t m_switchReplyDelayUs = 0;
+  uint32_t m_switchIdleRefreshPolls = 100;
   uint32_t m_switchRefreshIdleMs = 0;
   uint8_t m_coilHoldFrames = 3;
   bool m_disableFastFlipForTests = false;
