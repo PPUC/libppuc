@@ -105,6 +105,17 @@ Optional metadata parsed and exposed here:
   to this coil or motor, sent as `CONFIG_TOPIC_IGNORE_GAME_ON` before
   `CONFIG_TOPIC_TYPE`. For what a ROM drives with no game running, such as Dirty
   Harry's gun search at boot. The coin door still cuts it.
+- `boardFlippers: true` at the root → the boards drive the flippers on their
+  own. Every flipper winding - a coil with a `fastFlipSwitch` that holds while
+  the switch is closed, by the board's own rule `FastSwitchOutputHolds()` - is
+  sent `CONFIG_TOPIC_BOARD_FLIPPER` before `CONFIG_TOPIC_TYPE`; slings and jets
+  never are. A game whose flipper button or EOS is on another board than the
+  winding is refused. `ppuc` calls `SetFlippersEnabled()` at game start and
+  game over; `RS485Comm` sends it as `EVENT_SOURCE_FLIPPER_ENABLE` in a
+  `kFrameTrigger`, again after every session resync and every second. A bench
+  test (`SetDisableFastFlipForTests`) turns the mode off. Needs io-boards
+  firmware 0.5.0; older firmware ignores the topic and keeps gating the
+  flippers on game-on.
 - `romSpeed: true` on a motor → the ROM varies its speed by pulsing it. libppuc
   only reports them through `GetRomSpeedCoils`: `ppuc` measures the duty and calls
   `SetCoilPowerScale`, sent as `EVENT_SOURCE_POWER_SCALE` in a `kFrameTrigger`.

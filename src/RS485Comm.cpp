@@ -445,6 +445,19 @@ void RS485Comm::Run() {
         }
       }
 
+      if (m_flippersEnabled.load() >= 0) {
+        const auto flipperNow = std::chrono::steady_clock::now();
+        if (m_flipperEnableDue.exchange(false) ||
+            flipperNow >= m_nextFlipperEnableAt) {
+          Event flipperEnable(EVENT_SOURCE_FLIPPER_ENABLE, 0,
+                              m_flippersEnabled.load() > 0 ? 1 : 0);
+          SendEvent(&flipperEnable);
+          m_nextFlipperEnableAt =
+              flipperNow + std::chrono::milliseconds(
+                               RS485_COMM_FLIPPER_ENABLE_REPEAT_MS);
+        }
+      }
+
       const auto now = std::chrono::steady_clock::now();
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
@@ -1633,6 +1646,9 @@ bool RS485Comm::ResyncSession() {
   m_nextSwitchPollAt =
       std::chrono::steady_clock::now() +
       std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS);
+  // A trigger from the old epoch was dropped by the boards; the flipper
+  // enable goes out again in the new one.
+  m_flipperEnableDue = true;
   return true;
 }
 
@@ -2456,6 +2472,11 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     sp_flush(m_pSerialPort, SP_BUF_INPUT);
   }
   return false;
+}
+
+void RS485Comm::SetFlippersEnabled(bool enabled) {
+  m_flippersEnabled = enabled ? 1 : 0;
+  m_flipperEnableDue = true;
 }
 
 bool RS485Comm::SendEvent(Event* event) {

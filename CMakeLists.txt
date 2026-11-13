@@ -180,6 +180,7 @@ if(BUILD_TESTS)
       tests/test_coil_gi_mappings.cpp
       tests/test_pwm_output.cpp
       tests/test_board_hardware.cpp
+      tests/test_board_flippers.cpp
       tests/test_protocol_conformance.cpp
       third-party/include/io-boards/ProtocolConformance.cpp
    )

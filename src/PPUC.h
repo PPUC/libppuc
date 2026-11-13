@@ -108,6 +108,16 @@ class PPUCAPI PPUC {
   std::vector<uint16_t> GetRomSpeedCoils() const;
   // Scales a running motor's power, 0-255 of what it is configured with.
   void SetCoilPowerScale(int number, uint8_t scale);
+  // Board-controlled flippers (`boardFlippers: true`): the flipper windings
+  // follow their buttons on the board alone, between SetFlippersEnabled(true)
+  // at game start and SetFlippersEnabled(false) at game over. The ROM's flipper
+  // pulses and the game-on solenoid do not reach them.
+  bool UsesBoardFlippers() const { return !m_boardFlipperCoils.empty(); }
+  const std::vector<uint16_t>& GetBoardFlipperCoils() const {
+    return m_boardFlipperCoils;
+  }
+  bool IsBoardFlipperCoil(uint16_t number) const;
+  void SetFlippersEnabled(bool enabled);
   void SetGIState(int string, int brightness);
   void SetSwitchState(int number, int state);
   void TriggerEvent(uint8_t source, int number, int value);
@@ -169,6 +179,7 @@ class PPUCAPI PPUC {
   std::vector<PPUCLamp> m_lamps;
   std::vector<PPUCSwitch> m_switches;
   std::vector<PPUCCoilGiMapping> m_coilGiMappings;
+  std::vector<uint16_t> m_boardFlipperCoils;
   std::unordered_map<std::string, std::vector<uint16_t>> m_switchGroups;
 
   bool m_debug = false;

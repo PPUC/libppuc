@@ -708,6 +708,9 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
   ValidateRequiredField<std::string>(config, "root", "platform");
   ValidateRequiredField<uint8_t>(config, "root", "coinDoorClosedSwitch");
   ValidateRequiredField<uint8_t>(config, "root", "gameOnSolenoid");
+  // The board drives the flippers on its own between game start and game
+  // over. See ValidateBoardFlippers.
+  ValidateOptionalField<bool>(config, "root", "boardFlippers");
 
   const YAML::Node boards = config["boards"];
   ValidateRequiredSequence(boards, "boards");
@@ -1089,6 +1092,9 @@ uint8_t PPUC::ResolveLedType(const std::string& type) {
 namespace {
 // Defined below, next to ResolvePwmType which it depends on.
 void WarnAboutUnprotectedSolenoids(const YAML::Node& config);
+bool BoardFlippersRequested(const YAML::Node& config);
+bool IsBoardFlipperOutput(const YAML::Node& item);
+void ValidateBoardFlippers(const YAML::Node& config);
 }  // namespace
 
 void PPUC::LoadConfiguration(const char* configFile) {
@@ -1097,6 +1103,7 @@ void PPUC::LoadConfiguration(const char* configFile) {
     m_ppucConfig = YAML::LoadFile(configFile);
     ValidatePpucConfiguration(m_ppucConfig);
     WarnAboutUnprotectedSolenoids(m_ppucConfig);
+    ValidateBoardFlippers(m_ppucConfig);
     m_switchGroups = ParseSwitchGroups(m_ppucConfig);
     m_coilGiMappings = ParseCoilGiMappings(m_ppucConfig);
   } catch (const YAML::Exception& e) {
@@ -1143,6 +1150,15 @@ void PPUC::LoadConfiguration(const char* configFile) {
     // Default unknown platforms to non-WPC behavior so features like
     // always-on GI do not silently disappear on older systems.
     m_platform = PLATFORM_SYS11;
+  }
+
+  m_boardFlipperCoils.clear();
+  if (BoardFlippersRequested(m_ppucConfig)) {
+    for (const YAML::Node& item : m_ppucConfig["pwmOutput"]) {
+      if (IsBoardFlipperOutput(item)) {
+        m_boardFlipperCoils.push_back(item["number"].as<uint16_t>());
+      }
+    }
   }
 }
 
@@ -1263,6 +1279,88 @@ uint32_t ResolvePwmType(const std::string& type) {
 // is driven from a real PWM output.
 //
 // Lamps are the exception - a lamp output is meant to sit on indefinitely.
+bool BoardFlippersRequested(const YAML::Node& config) {
+  return config["boardFlippers"] && config["boardFlippers"].as<bool>();
+}
+
+// A flipper winding: a coil its fast-flip switch holds on for as long as the
+// button is closed, by the same rule the board uses (FastSwitchOutputHolds).
+// A sling or a jet fires a bounded pulse and is never one.
+bool IsBoardFlipperOutput(const YAML::Node& item) {
+  if (ResolvePwmType(item["type"].as<std::string>()) != PWM_TYPE_SOLENOID) {
+    return false;
+  }
+  if (item["fastFlipSwitch"].as<uint32_t>() == 0) {
+    return false;
+  }
+  const std::vector<uint32_t> stops = ReadStopSwitches(item);
+  return FastSwitchOutputHolds(
+      static_cast<uint16_t>(item["maxPulseTime"].as<uint32_t>()),
+      static_cast<uint16_t>(item["holdPowerActivationTime"].as<uint32_t>()),
+      static_cast<uint8_t>(stops.size() > 0 ? stops[0] : 0),
+      static_cast<uint8_t>(stops.size() > 1 ? stops[1] : 0));
+}
+
+// Board flippers have to work with nothing but the board they are on.
+//
+// The point of the mode is that no frame on the bus - a lost one, a resync, the
+// ROM's own flipper pulses - can drop a flipper or raise it late. A button or
+// an EOS on another board would put the bus right back in the loop, so such a
+// game is refused rather than half done.
+void ValidateBoardFlippers(const YAML::Node& config) {
+  if (!BoardFlippersRequested(config)) {
+    return;
+  }
+
+  std::unordered_map<uint32_t, uint8_t> switchBoard;
+  for (const YAML::Node& item : config["switches"]) {
+    switchBoard[item["number"].as<uint32_t>()] = item["board"].as<uint8_t>();
+  }
+  const YAML::Node switchMatrix = config["switchMatrix"];
+  if (switchMatrix && HasSequenceItems(switchMatrix["switches"])) {
+    const uint8_t board = switchMatrix["board"].as<uint8_t>();
+    for (const YAML::Node& item : switchMatrix["switches"]) {
+      switchBoard[item["number"].as<uint32_t>()] = board;
+    }
+  }
+
+  size_t flippers = 0;
+  size_t index = 0;
+  for (const YAML::Node& item : config["pwmOutput"]) {
+    const std::string path = "pwmOutput[" + std::to_string(index++) + "]";
+    if (!IsBoardFlipperOutput(item)) {
+      continue;
+    }
+    ++flippers;
+    const uint8_t board = item["board"].as<uint8_t>();
+    std::vector<uint32_t> switches = ReadStopSwitches(item);
+    switches.insert(switches.begin(), item["fastFlipSwitch"].as<uint32_t>());
+    for (uint32_t number : switches) {
+      const auto it = switchBoard.find(number);
+      if (it == switchBoard.end()) {
+        ThrowHardwareError(item, path,
+                           "boardFlippers: switch " + std::to_string(number) +
+                               " is not configured");
+      }
+      if (it->second != board) {
+        ThrowHardwareError(
+            item, path,
+            "boardFlippers: switch " + std::to_string(number) +
+                " is on board " + std::to_string(it->second) +
+                ", the winding on board " + std::to_string(board) +
+                "; a board flipper's button and EOS must be on its own board");
+      }
+    }
+  }
+
+  if (flippers == 0) {
+    throw std::runtime_error(
+        "invalid YAML configuration: boardFlippers is set, but no pwmOutput "
+        "is a flipper winding: a coil with a fastFlipSwitch and an EOS, a "
+        "hold power, holdWinding or no maxPulseTime");
+  }
+}
+
 bool PwmTypeNeedsThermalProtection(const std::string& type) {
   return ResolvePwmType(type) != PWM_TYPE_LAMP;
 }
@@ -1958,6 +2056,15 @@ bool PPUC::Connect() {
             index++, (uint8_t)CONFIG_TOPIC_IGNORE_GAME_ON,
             ignoreGameOn ? 1u : 0u));
 
+        // A bench test runs without fast flip, so without board flippers too.
+        const bool boardFlipper =
+            !m_disableFastFlipForTests && IsBoardFlipperCoil(
+                n_pwmOutput["number"].as<uint16_t>());
+        m_pRS485Comm->SendConfigEvent(new ConfigEvent(
+            n_pwmOutput["board"].as<uint8_t>(), (uint8_t)CONFIG_TOPIC_PWM,
+            index++, (uint8_t)CONFIG_TOPIC_BOARD_FLIPPER,
+            boardFlipper ? 1u : 0u));
+
         std::string c_type = n_pwmOutput["type"].as<std::string>();
         uint32_t type = ResolvePwmType(c_type);
         m_pRS485Comm->SendConfigEvent(new ConfigEvent(
@@ -2474,6 +2581,22 @@ std::vector<uint16_t> PPUC::GetRomSpeedCoils() const {
     }
   }
   return coils;
+}
+
+bool PPUC::IsBoardFlipperCoil(uint16_t number) const {
+  for (uint16_t coil : m_boardFlipperCoils) {
+    if (coil == number) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void PPUC::SetFlippersEnabled(bool enabled) {
+  if (!UsesBoardFlippers() || m_disableFastFlipForTests) {
+    return;
+  }
+  m_pRS485Comm->SetFlippersEnabled(enabled);
 }
 
 void PPUC::SetCoilPowerScale(int number, uint8_t scale) {

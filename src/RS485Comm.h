@@ -49,6 +49,10 @@ static constexpr uint32_t RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS = 4;
 #define RS485_COMM_EFFECT_EVENT_SPACING_US 1000
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 3
 #define RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS 250
+// How often the flipper enable is repeated while board flippers are in use.
+#ifndef RS485_COMM_FLIPPER_ENABLE_REPEAT_MS
+#define RS485_COMM_FLIPPER_ENABLE_REPEAT_MS 1000
+#endif
 // A board carrying only slow switches - start button, coin door, tilt - is
 // polled on every Nth chain instead of every chain. At the default 4 ms output
 // cadence that is roughly every 32 ms, far below what a hand can produce, and
@@ -115,6 +119,10 @@ class RS485Comm {
   void Run();
 
   void QueueEvent(Event* event);
+  // Board-controlled flippers on or off, see CONFIG_TOPIC_BOARD_FLIPPER. Sent
+  // at once, again after every session resync and about once a second, so a
+  // board that lost it - a restart, a lost frame - has it back quickly.
+  void SetFlippersEnabled(bool enabled);
   bool SendConfigEvent(ConfigEvent* configEvent);
   void SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config);
   bool SendSetupFrame();
@@ -432,5 +440,10 @@ class RS485Comm {
   std::set<uint8_t> m_configAckFailedBoards;
   std::chrono::steady_clock::time_point m_nextSwitchPollAt;
   std::chrono::steady_clock::time_point m_nextSwitchRefreshAt;
+  // -1 until the host first says, so a game without board flippers sends
+  // nothing; otherwise 0 or 1.
+  std::atomic<int> m_flippersEnabled{-1};
+  std::atomic<bool> m_flipperEnableDue{false};
+  std::chrono::steady_clock::time_point m_nextFlipperEnableAt{};
   bool m_boardPresenceFinalized = false;
 };
