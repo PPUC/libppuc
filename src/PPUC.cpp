@@ -2528,6 +2528,12 @@ bool PPUC::Connect() {
     return false;
   };
 
+  // Before anything restarts the boards. A board that restarted in the last
+  // game still knows why, and a hard reset would replace that with "reset by
+  // the host". When it happened the bus was usually too disturbed to ask;
+  // ppuc starting again a few seconds later is the first chance.
+  LogBoardLastStarts();
+
   if (m_forceHardReset) {
     printf("PPUC: starting board configuration using forced hard reset.\n");
     if (!m_pRS485Comm->ResetBoards()) {
@@ -2715,6 +2721,31 @@ PPUCFirmwareUpdateResult PPUC::UpdateBoardFirmware(
   return m_pRS485Comm->UpdateBoardFirmware(board, imageBoardType, image,
                                            imageBytes, progress,
                                            progressUserData);
+}
+
+void PPUC::LogBoardLastStarts() {
+  m_pRS485Comm->SettleBusBeforeAdmin();
+  const YAML::Node& configured = m_ppucConfig["boards"];
+  if (!HasSequenceItems(configured)) {
+    return;
+  }
+  for (YAML::Node entry : configured) {
+    const uint8_t board = entry["number"].as<uint8_t>();
+    if (m_skippedBoards.find(board) != m_skippedBoards.end()) {
+      continue;
+    }
+    // Short: a board that is not there must not hold up the start.
+    const PPUCBoardStats stats = m_pRS485Comm->QueryBoardStats(board, 100);
+    if (!stats.responded) {
+      printf("PPUC: board %u did not say why it last started\n", board);
+      continue;
+    }
+    // rxFrames says how long ago, roughly: a board that came back during the
+    // last run has seen a fraction of what the others have.
+    printf("PPUC: board %u last started: %s (rxFrames=%u rxCrcFail=%u)\n",
+           board, ResetCauseName(stats.resetCause), stats.rxFrames,
+           stats.rxCrcFail);
+  }
 }
 
 std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {

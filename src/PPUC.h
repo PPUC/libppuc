@@ -192,6 +192,8 @@ class PPUCAPI PPUC {
   char* m_serial;
   uint8_t m_platform;
   uint8_t m_coinDoorClosedSwitch;
+  // Logs why each board last started, read before startup restarts them.
+  void LogBoardLastStarts();
   uint8_t m_gameOnSolenoid;
   uint8_t m_tiltSwitch = 0;
   uint32_t m_switchReplyDelayUs = 0;
