@@ -2616,6 +2616,14 @@ std::vector<uint16_t> PPUC::GetRomSpeedCoils() const {
   return coils;
 }
 
+#ifndef PPUC_LIBRARY_SHA
+#define PPUC_LIBRARY_SHA "unknown"
+#endif
+
+const char* PPUC::GetLibraryVersion() { return PPUC_VERSION; }
+
+const char* PPUC::GetLibraryCommit() { return PPUC_LIBRARY_SHA; }
+
 bool PPUC::IsBoardFlipperCoil(uint16_t number) const {
   for (uint16_t coil : m_boardFlipperCoils) {
     if (coil == number) {

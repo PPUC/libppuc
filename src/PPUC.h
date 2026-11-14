@@ -112,6 +112,9 @@ class PPUCAPI PPUC {
   // follow their buttons on the board alone, between SetFlippersEnabled(true)
   // at game start and SetFlippersEnabled(false) at game over. The ROM's flipper
   // pulses and the game-on solenoid do not reach them.
+  // The version and the commit this library was built from, for the log.
+  static const char* GetLibraryVersion();
+  static const char* GetLibraryCommit();
   bool UsesBoardFlippers() const { return !m_boardFlipperCoils.empty(); }
   const std::vector<uint16_t>& GetBoardFlipperCoils() const {
     return m_boardFlipperCoils;

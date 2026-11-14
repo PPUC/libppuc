@@ -69,6 +69,43 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
    endif()
 endif()
 
+# The commit this library is built from, logged by ppuc at startup so a log
+# says what was running. A packaged build passes the commit it fetched (the
+# buildroot recipe does); otherwise it is read from git here, at configure time.
+set(LIBPPUC_GIT_SHA "" CACHE STRING "Commit libppuc is built from; read from git when empty")
+if(LIBPPUC_GIT_SHA STREQUAL "")
+   find_package(Git QUIET)
+   if(GIT_FOUND)
+      # Only this project's own checkout. Unpacked inside another repository,
+      # as buildroot does inside the image's, git would answer for that one.
+      execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --show-toplevel
+         OUTPUT_VARIABLE _libppuc_toplevel OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+      file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}" _libppuc_source_real)
+      if(_libppuc_toplevel)
+         file(REAL_PATH "${_libppuc_toplevel}" _libppuc_toplevel)
+      endif()
+      execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse HEAD
+         OUTPUT_VARIABLE _libppuc_sha OUTPUT_STRIP_TRAILING_WHITESPACE
+         RESULT_VARIABLE _libppuc_sha_result ERROR_QUIET)
+      if(_libppuc_sha_result EQUAL 0 AND "${_libppuc_toplevel}" STREQUAL "${_libppuc_source_real}")
+         set(_libppuc_effective_sha "${_libppuc_sha}")
+         execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" diff --quiet HEAD
+            RESULT_VARIABLE _libppuc_dirty ERROR_QUIET)
+         if(NOT _libppuc_dirty EQUAL 0)
+            string(APPEND _libppuc_effective_sha "-dirty")
+         endif()
+      endif()
+   endif()
+else()
+   set(_libppuc_effective_sha "${LIBPPUC_GIT_SHA}")
+endif()
+if(NOT _libppuc_effective_sha)
+   set(_libppuc_effective_sha "unknown")
+endif()
+message(STATUS "LIBPPUC_GIT_SHA: ${_libppuc_effective_sha}")
+set_source_files_properties(src/PPUC.cpp PROPERTIES
+   COMPILE_DEFINITIONS "PPUC_LIBRARY_SHA=\"${_libppuc_effective_sha}\"")
+
 set(PPUC_SOURCES
    src/RS485Comm.h
    src/RS485Comm.cpp
