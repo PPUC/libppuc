@@ -111,7 +111,11 @@ struct PPUCBoardStats {
   // bit2 gameOnSolenoid configured, bit3 coinDoorSwitch configured.
   // bit0 powerOn, bit1 coinDoorClosed, bit3 coinDoorSwitch set;
   // bits 8-15 the configured gameOnSolenoid, bits 16-23 the coinDoorSwitch.
+  // Bits 24-31 carry resetCause below and are cleared here.
   uint32_t highPowerGate = 0;
+  // Why the board last started, a ppuc::v2::ResetCause; 0 from firmware
+  // before 0.5.2. PPUC::ResetCauseName() says it in words.
+  uint8_t resetCause = 0;
 };
 
 struct PPUCBoardVersion {
@@ -161,6 +165,9 @@ struct PPUCBusHealth {
   // A board that rejoins on setup alone is driving coils without its
   // protection, so this is not something to recover from silently.
   uint32_t boardsLostConfiguration = 0;
+  // The board the last of those was, by its place in the switch chain. Its
+  // stats say why it restarted (PPUCBoardStats::resetCause). 0 for none.
+  uint8_t lastBoardLostConfiguration = 0;
 
   // Board configuration, which happens at startup and after a resync.
   uint32_t configAckRetries = 0;   // config frames that needed repeating

@@ -155,6 +155,8 @@ class PPUCAPI PPUC {
   // Each board's own transport counters, for diagnosing a board that stopped
   // answering. Safe to call at any time; it is an out-of-band admin exchange.
   std::vector<PPUCBoardStats> QueryBoardStats();
+  // PPUCBoardStats::resetCause in words, for the log.
+  static const char* ResetCauseName(uint8_t resetCause);
 
   // Sends a firmware image to one board. Call StopUpdates() first: the runtime
   // loop must not be transmitting into the middle of a transfer.

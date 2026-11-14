@@ -374,6 +374,7 @@ class RS485Comm {
     RS485Comm* m_comm;
   };
   std::atomic<uint32_t> m_boardsLostConfigurationCount { 0 };
+  std::atomic<uint8_t> m_lastBoardLostConfiguration { 0 };
   std::mutex m_outputQueueMutex;
   // Wakes the poll loop out of its idle wait between output frames when a coil
   // changes. Both guarded by m_outputQueueMutex.

@@ -1200,6 +1200,7 @@ PPUCBusHealth RS485Comm::GetBusHealth() const {
   health.sessionResyncs = m_sessionResyncCount.load();
   health.configAckRetries = m_configAckRetryCount.load();
   health.boardsLostConfiguration = m_boardsLostConfigurationCount.load();
+  health.lastBoardLostConfiguration = m_lastBoardLostConfiguration.load();
   health.configAckTimeouts = m_configAckTimeoutCount.load();
   health.serialWriteFailures =
       m_anomalies[static_cast<size_t>(Anomaly::SerialWrite)].total.load();
@@ -1897,6 +1898,8 @@ PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
                                 result.selected, result.versionQueries,
                                 result.versionReplies,
                                 result.highPowerGate);
+      result.resetCause = ppuc::v2::StatsResetCause(result.highPowerGate);
+      result.highPowerGate &= 0x00FFFFFFu;
       result.responded = true;
       return result;
     }
@@ -2416,6 +2419,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       // Counted separately from the resync above. A board only asks for setup
       // at runtime if it restarted, and a resync cannot put back the per-device
       // configuration it lost.
+      m_lastBoardLostConfiguration = expectedBoard;
       ++m_boardsLostConfigurationCount;
       ReportAnomaly(Anomaly::BoardStatus,
                     "Board %u restarted and lost its configuration",

@@ -2622,6 +2622,10 @@ std::vector<uint16_t> PPUC::GetRomSpeedCoils() const {
 
 const char* PPUC::GetLibraryVersion() { return PPUC_VERSION; }
 
+const char* PPUC::ResetCauseName(uint8_t resetCause) {
+  return ppuc::v2::ResetCauseName(resetCause);
+}
+
 const char* PPUC::GetLibraryCommit() { return PPUC_LIBRARY_SHA; }
 
 bool PPUC::IsBoardFlipperCoil(uint16_t number) const {
