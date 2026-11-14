@@ -106,10 +106,13 @@ Optional metadata parsed and exposed here:
   `CONFIG_TOPIC_TYPE`. For what a ROM drives with no game running, such as Dirty
   Harry's gun search at boot. The coin door still cuts it.
 - `boardFlippers: true` at the root → the boards drive the flippers on their
-  own. Every flipper winding - a coil with a `fastFlipSwitch` that holds while
-  the switch is closed, by the board's own rule `FastSwitchOutputHolds()` - is
-  sent `CONFIG_TOPIC_BOARD_FLIPPER` before `CONFIG_TOPIC_TYPE`; slings and jets
-  never are. A game whose flipper button or EOS is on another board than the
+  own. A flipper button is a `fastFlipSwitch` that holds at least one coil on
+  while it is closed, by the board's own rule `FastSwitchOutputHolds()`. Every
+  coil on such a button is sent `CONFIG_TOPIC_BOARD_FLIPPER` before
+  `CONFIG_TOPIC_TYPE`: the hold winding, and the power winding with or without
+  an EOS - without one it is a fixed pulse of its `maxPulseTime`, and a ball
+  knocking the finger down no longer fires it again. Slings and jets have
+  buttons of their own and never are. A game whose flipper button or EOS is on another board than the
   winding is refused. `ppuc` calls `SetFlippersEnabled()` at game start and
   game over; `RS485Comm` sends it as `EVENT_SOURCE_FLIPPER_ENABLE` in a
   `kFrameTrigger`, again after every session resync and every second. A bench

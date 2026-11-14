@@ -1093,7 +1093,9 @@ namespace {
 // Defined below, next to ResolvePwmType which it depends on.
 void WarnAboutUnprotectedSolenoids(const YAML::Node& config);
 bool BoardFlippersRequested(const YAML::Node& config);
-bool IsBoardFlipperOutput(const YAML::Node& item);
+std::set<uint32_t> FlipperButtons(const YAML::Node& config);
+bool IsBoardFlipperOutput(const YAML::Node& item,
+                          const std::set<uint32_t>& buttons);
 void ValidateBoardFlippers(const YAML::Node& config);
 }  // namespace
 
@@ -1154,8 +1156,9 @@ void PPUC::LoadConfiguration(const char* configFile) {
 
   m_boardFlipperCoils.clear();
   if (BoardFlippersRequested(m_ppucConfig)) {
+    const std::set<uint32_t> buttons = FlipperButtons(m_ppucConfig);
     for (const YAML::Node& item : m_ppucConfig["pwmOutput"]) {
-      if (IsBoardFlipperOutput(item)) {
+      if (IsBoardFlipperOutput(item, buttons)) {
         m_boardFlipperCoils.push_back(item["number"].as<uint16_t>());
       }
     }
@@ -1283,10 +1286,10 @@ bool BoardFlippersRequested(const YAML::Node& config) {
   return config["boardFlippers"] && config["boardFlippers"].as<bool>();
 }
 
-// A flipper winding: a coil its fast-flip switch holds on for as long as the
-// button is closed, by the same rule the board uses (FastSwitchOutputHolds).
-// A sling or a jet fires a bounded pulse and is never one.
-bool IsBoardFlipperOutput(const YAML::Node& item) {
+// Whether a coil stays on for as long as its fast-flip switch is closed, by
+// the rule the board uses (FastSwitchOutputHolds): an EOS, a hold power, or no
+// maximum pulse time. A sling or a jet fires a bounded pulse instead.
+bool HoldsWhileSwitchClosed(const YAML::Node& item) {
   if (ResolvePwmType(item["type"].as<std::string>()) != PWM_TYPE_SOLENOID) {
     return false;
   }
@@ -1299,6 +1302,35 @@ bool IsBoardFlipperOutput(const YAML::Node& item) {
       static_cast<uint16_t>(item["holdPowerActivationTime"].as<uint32_t>()),
       static_cast<uint8_t>(stops.size() > 0 ? stops[0] : 0),
       static_cast<uint8_t>(stops.size() > 1 ? stops[1] : 0));
+}
+
+// Flipper buttons: the fast-flip switches that hold at least one coil on.
+std::set<uint32_t> FlipperButtons(const YAML::Node& config) {
+  std::set<uint32_t> buttons;
+  for (const YAML::Node& item : config["pwmOutput"]) {
+    if (HoldsWhileSwitchClosed(item)) {
+      buttons.insert(item["fastFlipSwitch"].as<uint32_t>());
+    }
+  }
+  return buttons;
+}
+
+// A flipper winding: every coil a flipper button drives.
+//
+// That is the hold winding, and the power winding whether or not it has an
+// EOS. Without one the power winding is a fixed pulse - its maxPulseTime -
+// and taken on its own it would look like a sling; it is on the button of a
+// hold winding, though, and the board treats it as a flipper's for the same
+// reason (fastSwitchHoldsAnOutput). Left with the ROM and game-on while its
+// hold winding went to the board, a flipper would be half one and half the
+// other. A sling or a jet has a button of its own and is never one.
+bool IsBoardFlipperOutput(const YAML::Node& item,
+                          const std::set<uint32_t>& buttons) {
+  if (ResolvePwmType(item["type"].as<std::string>()) != PWM_TYPE_SOLENOID) {
+    return false;
+  }
+  const uint32_t button = item["fastFlipSwitch"].as<uint32_t>();
+  return button != 0 && buttons.count(button) != 0;
 }
 
 // Board flippers have to work with nothing but the board they are on.
@@ -1324,11 +1356,12 @@ void ValidateBoardFlippers(const YAML::Node& config) {
     }
   }
 
+  const std::set<uint32_t> buttons = FlipperButtons(config);
   size_t flippers = 0;
   size_t index = 0;
   for (const YAML::Node& item : config["pwmOutput"]) {
     const std::string path = "pwmOutput[" + std::to_string(index++) + "]";
-    if (!IsBoardFlipperOutput(item)) {
+    if (!IsBoardFlipperOutput(item, buttons)) {
       continue;
     }
     ++flippers;

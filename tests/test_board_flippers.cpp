@@ -116,6 +116,38 @@ TEST_CASE("the flipper windings are board flippers, a sling is not") {
   CHECK(BoardFlipperCoils(yaml) == std::vector<uint16_t>{47, 48});
 }
 
+namespace {
+
+std::string Without(std::string yaml, const std::string& part) {
+  const auto pos = yaml.find(part);
+  REQUIRE_MESSAGE(pos != std::string::npos, "not in the config: " << part);
+  return yaml.erase(pos, part.size());
+}
+
+const char* kEos = "    stopSwitches:\n      - 113\n";
+
+}  // namespace
+
+TEST_CASE("a power winding without an EOS is still a board flipper") {
+  // A fixed pulse on the power winding instead of an EOS: on its own it looks
+  // like a sling, but its button holds the hold winding.
+  const auto yaml = Without(FlipperConfig("true"), kEos);
+  REQUIRE(LoadAndCaptureError(yaml).empty());
+  CHECK(BoardFlipperCoils(yaml) == std::vector<uint16_t>{47, 48});
+}
+
+TEST_CASE("a lone pulsed coil on a button is not a flipper") {
+  // No EOS and no hold winding on the button: that is a sling's shape.
+  std::string yaml = Without(FlipperConfig("true"), kEos);
+  const auto hold = yaml.find("  -\n    description: 'Left Flipper Hold'");
+  const auto sling = yaml.find("  -\n    description: 'Left Sling'\n    board: 1\n    port: 21");
+  REQUIRE(hold != std::string::npos);
+  REQUIRE(sling != std::string::npos);
+  yaml.erase(hold, sling - hold);
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("no pwmOutput is a flipper winding") != std::string::npos);
+}
+
 TEST_CASE("without boardFlippers nothing changes") {
   CHECK(BoardFlipperCoils(FlipperConfig("")).empty());
   CHECK(BoardFlipperCoils(FlipperConfig("false")).empty());
