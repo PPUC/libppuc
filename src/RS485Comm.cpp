@@ -2388,6 +2388,34 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       continue;
     }
 
+    // The CRC first, before a single byte of the reply is believed.
+    //
+    // The epoch, the status flags and the next-board token used to be acted on
+    // ahead of this check. A reply damaged on the wire then had its garbage
+    // taken at its word: a wrong epoch byte started a session resync, and a
+    // flags byte with the needs-setup bit set was reported as "board N
+    // restarted and lost its configuration", which ends the game. On Dirty
+    // Harry that is how games ended - the board had not restarted, and the
+    // line in the log carried the same timestamp as the CRC error.
+    const size_t frameBytes =
+        ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
+    const uint16_t receivedCrc =
+        (static_cast<uint16_t>(buffer[frameBytes - 2]) << 8) |
+        static_cast<uint16_t>(buffer[frameBytes - 1]);
+    const uint16_t calculatedCrc =
+        ppuc::v2::Crc16Ccitt(buffer, frameBytes - ppuc::v2::kCrcBytes);
+    if (receivedCrc != calculatedCrc) {
+      ReportAnomaly(Anomaly::FrameCrc, "Invalid V2 switch frame CRC: got=%04X expected=%04X",
+                  receivedCrc, calculatedCrc);
+      // A reply that failed its CRC may have carried a change this host will
+      // now never see, and the bitmap is stale until something says otherwise.
+      // The host knows that here, so it asks rather than waiting for the
+      // periodic refresh to come round: healing what is known to be lost is
+      // what makes it safe to let that interval be long.
+      RequestSwitchRefresh();
+      return false;
+    }
+
     if (outNextBoard) {
       *outNextBoard = header[2];
     }
@@ -2441,25 +2469,6 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
                   expectedBoard, statusFlags,
                   parserResynced ? " parser-resynced" : "",
                   switchOverflow ? " switch-overflow" : "");
-    }
-
-    const size_t frameBytes =
-        ppuc::v2::kHeaderBytes + payloadBytes + ppuc::v2::kCrcBytes;
-    const uint16_t receivedCrc =
-        (static_cast<uint16_t>(buffer[frameBytes - 2]) << 8) |
-        static_cast<uint16_t>(buffer[frameBytes - 1]);
-    const uint16_t calculatedCrc =
-        ppuc::v2::Crc16Ccitt(buffer, frameBytes - ppuc::v2::kCrcBytes);
-    if (receivedCrc != calculatedCrc) {
-      ReportAnomaly(Anomaly::FrameCrc, "Invalid V2 switch frame CRC: got=%04X expected=%04X",
-                  receivedCrc, calculatedCrc);
-      // A reply that failed its CRC may have carried a change this host will
-      // now never see, and the bitmap is stale until something says otherwise.
-      // The host knows that here, so it asks rather than waiting for the
-      // periodic refresh to come round: healing what is known to be lost is
-      // what makes it safe to let that interval be long.
-      RequestSwitchRefresh();
-      return false;
     }
 
     if (frameType == ppuc::v2::kFrameSwitchState) {
