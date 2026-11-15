@@ -153,6 +153,31 @@ class RS485Comm {
   // `slowCount` to skip the slow prefix. Pure, and public, so the rule can be
   // tested without a serial port - it decides how often a start button is
   // looked at, which is not something to leave unverified.
+  // Whether a switch reply means the session has to be set up again.
+  //
+  // A resync resends the setup frame and every mapping frame, and nothing is
+  // driven meanwhile: about 0.4 s without lamp or coil updates. It is the
+  // answer to a board that is in the wrong session - another epoch, an
+  // incomplete mapping, no setup at all. It is not the answer to a board that
+  // missed one frame. The protocol sends full snapshots, so the next frame
+  // milliseconds later puts that right by itself, and triggers that matter are
+  // repeated.
+  //
+  // It used to be the answer to both: a sequence gap, or a reply that named an
+  // older poll frame than the last one sent, started a resync. On Dirty Harry,
+  // with a Pi busy running a game, a frame was lost about once a second, so
+  // the machine spent a third of its time resyncing - frozen lamps, coils that
+  // came late or short, flippers that dropped - while a bench test on an idle
+  // Pi ran without a single one.
+  static bool SwitchReplyNeedsResync(uint8_t statusFlags, uint8_t epochSeen,
+                                     uint8_t epoch) {
+    if (epochSeen != epoch) {
+      return true;
+    }
+    return (statusFlags & (ppuc::v2::kStatusNeedsSetup |
+                           ppuc::v2::kStatusMappingIncomplete)) != 0;
+  }
+
   static uint8_t SwitchChainEntryIndex(uint8_t slowCount, uint8_t boardCount,
                                        uint8_t divider, uint32_t cycle);
   bool HadConfigurationFailure() const;
@@ -431,6 +456,10 @@ class RS485Comm {
   std::atomic<uint32_t> m_switchReplyChainCount{0};
   std::atomic<uint32_t> m_switchReplyMissCount{0};
   std::atomic<uint32_t> m_sessionResyncCount{0};
+  // Every resync actually carried out, whatever asked for it.
+  std::atomic<uint32_t> m_sessionResyncsStarted{0};
+  // Frames a board missed that were left to the next snapshot to put right.
+  std::atomic<uint32_t> m_framesLostTolerated{0};
   std::atomic<uint32_t> m_configAckRetryCount{0};
   std::atomic<uint32_t> m_configAckTimeoutCount{0};
   bool m_configFailed = false;

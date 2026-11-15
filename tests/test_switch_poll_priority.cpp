@@ -131,3 +131,33 @@ TEST_CASE("slowSwitches is optional and must be a boolean") {
   CHECK_THROWS_AS(wrongPpuc.LoadConfiguration(wrong.path()),
                   std::runtime_error);
 }
+
+// --- When a switch reply means the session has to be set up again -----------
+//
+// A resync is about 0.4 s without lamp or coil updates. It answers a board in
+// the wrong session, not a board that missed one frame: on Dirty Harry a frame
+// was lost about once a second in a game, and every one of them used to cost a
+// resync.
+
+TEST_CASE("a board that only missed a frame does not need a resync") {
+  using namespace ppuc::v2;
+  CHECK_FALSE(RS485Comm::SwitchReplyNeedsResync(
+      kStatusInSync | kStatusSequenceGap, 7, 7));
+  // 0x19, what board 5 reported all game long.
+  CHECK_FALSE(RS485Comm::SwitchReplyNeedsResync(
+      kStatusInSync | kStatusSequenceGap | kStatusParserResynced, 7, 7));
+  CHECK_FALSE(RS485Comm::SwitchReplyNeedsResync(
+      kStatusInSync | kStatusSwitchOverflow, 7, 7));
+  CHECK_FALSE(RS485Comm::SwitchReplyNeedsResync(kStatusInSync, 7, 7));
+}
+
+TEST_CASE("a board in the wrong session needs a resync") {
+  using namespace ppuc::v2;
+  CHECK(RS485Comm::SwitchReplyNeedsResync(kStatusInSync, 6, 7));
+  CHECK(RS485Comm::SwitchReplyNeedsResync(kStatusMappingIncomplete, 7, 7));
+  // 0x1C: the mapping burst of the last resync overran the board.
+  CHECK(RS485Comm::SwitchReplyNeedsResync(
+      kStatusMappingIncomplete | kStatusSequenceGap | kStatusParserResynced, 7,
+      7));
+  CHECK(RS485Comm::SwitchReplyNeedsResync(kStatusNeedsSetup, 7, 7));
+}

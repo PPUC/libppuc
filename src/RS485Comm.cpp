@@ -1198,6 +1198,8 @@ PPUCBusHealth RS485Comm::GetBusHealth() const {
   health.switchReplyChainsClean = m_cleanSwitchReplyChainCount.load();
   health.switchReplyMisses = m_switchReplyMissCount.load();
   health.sessionResyncs = m_sessionResyncCount.load();
+  health.sessionResyncsStarted = m_sessionResyncsStarted.load();
+  health.framesLostTolerated = m_framesLostTolerated.load();
   health.configAckRetries = m_configAckRetryCount.load();
   health.boardsLostConfiguration = m_boardsLostConfigurationCount.load();
   health.lastBoardLostConfiguration = m_lastBoardLostConfiguration.load();
@@ -1629,6 +1631,7 @@ bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
 }
 
 bool RS485Comm::ResyncSession() {
+  ++m_sessionResyncsStarted;
   ++m_epoch;
   ReportAnomaly(Anomaly::SessionResync, "Starting V2 session resync epoch=%u",
                 m_epoch);
@@ -2400,20 +2403,27 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
     if (epochSeen != m_epoch) {
       ReportAnomaly(Anomaly::EpochMismatch, "V2 switch reply epoch mismatch: board=%u seen=%u expected=%u",
                   expectedBoard, epochSeen, m_epoch);
-      m_needSessionResync = true;
     }
-    if (lastHostSequenceSeen != m_lastOutputSequenceSent) {
-      ReportAnomaly(Anomaly::EpochMismatch,
-          "V2 switch reply sequence mismatch: board=%u seen=%u expected=%u",
-          expectedBoard, lastHostSequenceSeen, m_lastOutputSequenceSent);
+    // See SwitchReplyNeedsResync(): only a board in the wrong session.
+    if (SwitchReplyNeedsResync(statusFlags, epochSeen, m_epoch)) {
+      if (epochSeen == m_epoch) {
+        ReportAnomaly(Anomaly::BoardStatus, "V2 switch reply requested resync: board=%u flags=0x%02X",
+                    expectedBoard, statusFlags);
+      }
       m_needSessionResync = true;
-    }
-    if ((statusFlags & (ppuc::v2::kStatusNeedsSetup |
-                        ppuc::v2::kStatusMappingIncomplete |
-                        ppuc::v2::kStatusSequenceGap)) != 0) {
-      ReportAnomaly(Anomaly::BoardStatus, "V2 switch reply requested resync: board=%u flags=0x%02X",
-                  expectedBoard, statusFlags);
-      m_needSessionResync = true;
+    } else if (lastHostSequenceSeen != m_lastOutputSequenceSent ||
+               (statusFlags & ppuc::v2::kStatusSequenceGap) != 0) {
+      // The board missed a frame, or this reply is to an older poll than the
+      // last one sent. The next snapshot puts the outputs right. No switch
+      // refresh either: this reply arrived, so no switch report was lost, and
+      // a refresh restarts the boards' switch readers. A reply that did go
+      // missing is a missed chain, which asks for one.
+      ++m_framesLostTolerated;
+      ReportAnomaly(Anomaly::BoardStatus,
+                    "V2 board missed a frame, left to the next snapshot: "
+                    "board=%u flags=0x%02X seen=%u sent=%u",
+                    expectedBoard, statusFlags, lastHostSequenceSeen,
+                    m_lastOutputSequenceSent);
     }
     if ((statusFlags & ppuc::v2::kStatusNeedsSetup) != 0) {
       // Counted separately from the resync above. A board only asks for setup

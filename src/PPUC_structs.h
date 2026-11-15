@@ -157,6 +157,14 @@ struct PPUCBusHealth {
   uint32_t switchReplyMisses = 0;       // did not complete (lifetime, not the
                                         // consecutive streak used internally)
   uint32_t sessionResyncs = 0;          // miss streak reached the threshold
+  // Every session resync carried out, whatever asked for it: the miss streak
+  // above, or a board reporting another epoch or an incomplete mapping. Each
+  // one is about 0.4 s in which no lamp or coil is updated, so this is the
+  // number that says how a game felt. sessionResyncs alone hid hundreds.
+  uint32_t sessionResyncsStarted = 0;
+  // Frames a board missed that needed no resync: the next snapshot put the
+  // outputs right.
+  uint32_t framesLostTolerated = 0;
 
   // A board reported that it needs setup while the game was running, which
   // means it restarted and lost its configuration. Distinct from a resync: a
