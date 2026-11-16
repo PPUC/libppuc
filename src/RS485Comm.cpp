@@ -284,6 +284,7 @@ const char* AnomalyName(RS485Comm::Anomaly kind) {
     case RS485Comm::Anomaly::BoardStatus: return "board status";
     case RS485Comm::Anomaly::QueueOverflow: return "output queue overflow";
     case RS485Comm::Anomaly::SessionResync: return "session resync";
+    case RS485Comm::Anomaly::StaleSwitchReply: return "stale switch reply";
     default: return "unknown";
   }
 }
@@ -1212,6 +1213,7 @@ PPUCBusHealth RS485Comm::GetBusHealth() const {
   health.sessionResyncs = m_sessionResyncCount.load();
   health.sessionResyncsStarted = m_sessionResyncsStarted.load();
   health.framesLostTolerated = m_framesLostTolerated.load();
+  health.staleSwitchReplies = m_staleSwitchReplies.load();
   health.configAckRetries = m_configAckRetryCount.load();
   health.boardsLostConfiguration = m_boardsLostConfigurationCount.load();
   health.lastBoardLostConfiguration = m_lastBoardLostConfiguration.load();
@@ -1544,11 +1546,21 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
       continue;
     }
 
-    if (!ReceiveSwitchStateFrame(expected, &next, &hadState)) {
+    // Only the board the poll frame named got its token from that frame.
+    const bool tokenFromPollFrame = hops == 1;
+    if (!ReceiveSwitchStateFrame(expected, &next, &hadState,
+                                 tokenFromPollFrame)) {
       success = false;
       break;
     }
     expected = next;
+  }
+
+  if (!success) {
+    // Boards behind the one that failed may still be answering: they heard
+    // its token even though the host could not read it. Their replies must not
+    // be waiting in the buffer when the next chain starts.
+    DrainInputUntilQuiet();
   }
 
   ++m_switchReplyChainCount;
@@ -1568,6 +1580,26 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
       m_needSessionResync = true;
     }
   }
+}
+
+// Reads and throws away whatever is still arriving, until the line has been
+// quiet for a couple of byte times, then flushes. Bounded: a line that never
+// goes quiet is noise, and the chain after this one will say so.
+void RS485Comm::DrainInputUntilQuiet() {
+  if (m_pSerialPort == NULL) {
+    return;
+  }
+  constexpr unsigned kQuietMs = 2;
+  constexpr auto kMaxDrain = std::chrono::milliseconds(20);
+  const auto start = std::chrono::steady_clock::now();
+  uint8_t scratch[64];
+  while (std::chrono::steady_clock::now() - start < kMaxDrain) {
+    if (sp_blocking_read(m_pSerialPort, scratch, sizeof(scratch), kQuietMs) <=
+        0) {
+      break;
+    }
+  }
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
 }
 
 uint8_t RS485Comm::GetLogicalNextSwitchBoard(uint8_t board) const {
@@ -2302,7 +2334,8 @@ void RS485Comm::NoteSwitchActivity(uint16_t switchNumber) {
 
 bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
                                         uint8_t* outNextBoard,
-                                        bool* outHadState) {
+                                        bool* outHadState,
+                                        bool tokenFromPollFrame) {
   if (m_pSerialPort == NULL ||
       !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
     return false;
@@ -2433,12 +2466,24 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
       return false;
     }
 
+    const uint8_t epochSeen = buffer[ppuc::v2::kHeaderBytes];
+    const uint8_t lastHostSequenceSeen = buffer[ppuc::v2::kHeaderBytes + 1];
+    if (SwitchReplyIsStale(tokenFromPollFrame, lastHostSequenceSeen,
+                           m_lastOutputSequenceSent)) {
+      // Not this board's reply. Keep reading for the real one.
+      ++m_staleSwitchReplies;
+      ReportAnomaly(Anomaly::StaleSwitchReply,
+                    "Dropped a stale V2 switch reply while waiting for board "
+                    "%u: seen=%u sent=%u",
+                    expectedBoard, lastHostSequenceSeen,
+                    m_lastOutputSequenceSent);
+      continue;
+    }
+
     if (outNextBoard) {
       *outNextBoard = header[2];
     }
 
-    const uint8_t epochSeen = buffer[ppuc::v2::kHeaderBytes];
-    const uint8_t lastHostSequenceSeen = buffer[ppuc::v2::kHeaderBytes + 1];
     const uint8_t statusFlags = buffer[ppuc::v2::kHeaderBytes + 2];
     const bool parserResynced =
         (statusFlags & ppuc::v2::kStatusParserResynced) != 0;

@@ -161,3 +161,21 @@ TEST_CASE("a board in the wrong session needs a resync") {
       7));
   CHECK(RS485Comm::SwitchReplyNeedsResync(kStatusNeedsSetup, 7, 7));
 }
+
+// --- A reply left over from an earlier chain --------------------------------
+//
+// After a CRC error the host gives up on a chain, but the boards behind the
+// failing one heard its token and answer anyway. Those replies were waiting in
+// the buffer when the next chain began, and were taken for the polled board's.
+
+TEST_CASE("the polled board's reply must name the poll frame") {
+  CHECK(RS485Comm::SwitchReplyIsStale(true, 41, 42));
+  CHECK_FALSE(RS485Comm::SwitchReplyIsStale(true, 42, 42));
+  CHECK_FALSE(RS485Comm::SwitchReplyIsStale(true, 255, 255));
+}
+
+TEST_CASE("a later board in the chain may have missed the poll frame") {
+  // It got its token from the board before it, so an older sequence is a
+  // missed frame, not a stale reply.
+  CHECK_FALSE(RS485Comm::SwitchReplyIsStale(false, 41, 42));
+}

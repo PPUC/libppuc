@@ -105,6 +105,7 @@ class RS485Comm {
     QueueOverflow,     // host-side output snapshots were dropped
     SessionResync,     // the host restarted the session
     UnmappedDevice,    // an output was addressed that no board claims
+    StaleSwitchReply,  // a reply from an earlier chain was waiting in the buffer
     Count
   };
 
@@ -176,6 +177,24 @@ class RS485Comm {
     }
     return (statusFlags & (ppuc::v2::kStatusNeedsSetup |
                            ppuc::v2::kStatusMappingIncomplete)) != 0;
+  }
+
+  // Whether a switch reply is left over from an earlier poll.
+  //
+  // A switch reply carries no board id, only the sequence of the last poll
+  // frame the board heard. The board the poll frame names gets its token from
+  // that frame alone, so its reply can only name that frame: anything else in
+  // the buffer at that point is a late reply from an earlier chain - a board
+  // that kept answering after the host had given up on the chain because of a
+  // CRC error. Taken for this board's reply, its bitmap went through this
+  // board's switches, the next-board pointer led the host on through further
+  // stale replies, and the host transmitted over the real ones. A later board
+  // in the chain gets its token from the board before it and may legitimately
+  // have missed the poll frame, so only the first one can be judged this way.
+  static bool SwitchReplyIsStale(bool tokenFromPollFrame,
+                                 uint8_t lastPollSequenceSeen,
+                                 uint8_t lastPollSequenceSent) {
+    return tokenFromPollFrame && lastPollSequenceSeen != lastPollSequenceSent;
   }
 
   static uint8_t SwitchChainEntryIndex(uint8_t slowCount, uint8_t boardCount,
@@ -255,7 +274,8 @@ class RS485Comm {
   bool ReceiveConfigAck(uint8_t boardId, uint8_t topic, uint8_t index,
                         uint8_t key);
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
-                               bool* outHadState);
+                               bool* outHadState, bool tokenFromPollFrame);
+  void DrainInputUntilQuiet();
   bool SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
                               bool* outHadState);
   uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
@@ -460,6 +480,7 @@ class RS485Comm {
   std::atomic<uint32_t> m_sessionResyncsStarted{0};
   // Frames a board missed that were left to the next snapshot to put right.
   std::atomic<uint32_t> m_framesLostTolerated{0};
+  std::atomic<uint32_t> m_staleSwitchReplies{0};
   std::atomic<uint32_t> m_configAckRetryCount{0};
   std::atomic<uint32_t> m_configAckTimeoutCount{0};
   bool m_configFailed = false;

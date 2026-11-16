@@ -165,6 +165,10 @@ struct PPUCBusHealth {
   // Frames a board missed that needed no resync: the next snapshot put the
   // outputs right.
   uint32_t framesLostTolerated = 0;
+  // Switch replies left over from an earlier chain and dropped, rather than
+  // taken for the board being polled. Each one says a chain was cut short
+  // while boards behind the failing one were still answering.
+  uint32_t staleSwitchReplies = 0;
 
   // A board reported that it needs setup while the game was running, which
   // means it restarted and lost its configuration. Distinct from a resync: a
