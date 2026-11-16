@@ -210,12 +210,25 @@ TEST_CASE("dualWinding false does not count as protection") {
         std::string::npos);
 }
 
-TEST_CASE("an eosSwitch number is accepted alongside dualWinding") {
+TEST_CASE("an eosSwitch is reported and ignored") {
+  // It never reached a board. The EOS that cuts a winding is a stop switch,
+  // and a game exported with its EOS only in eosSwitch has no EOS at all.
   const auto yaml =
       UnprotectedCoil() + "    dualWinding: true\n    eosSwitch: 42\n";
 
   CHECK(LoadAndCaptureError(yaml).empty());
-  CHECK(LoadAndCaptureStdout(yaml).find("no thermal protection") ==
+  const auto output = LoadAndCaptureStdout(yaml);
+  CHECK(output.find("'eosSwitch', which is not used") != std::string::npos);
+  CHECK(output.find("stopSwitches") != std::string::npos);
+}
+
+TEST_CASE("a dualWinding coil with stopSwitches is refused") {
+  // The board would cut the one output it has at the end of every stroke.
+  const auto yaml =
+      UnprotectedCoil() + "    dualWinding: true\n    stopSwitches: [5]\n";
+
+  const auto error = LoadAndCaptureError(yaml);
+  CHECK(error.find("dualWinding coil cannot have stopSwitches") !=
         std::string::npos);
 }
 

@@ -471,6 +471,40 @@ uint8_t ConfiguredBoardType(const YAML::Node& board) {
                            ConfigItemContext(item, path) + ": " + problem);
 }
 
+// The end-of-stroke contact has one place in the configuration: stopSwitches
+// on the power winding, which the board acts on.
+//
+// eosSwitch was added first, as a description of a dual-wound coil whose
+// contact is also wired to an input. Nothing ever read it, while stopSwitches
+// came a week later and is what cuts the winding. Two fields for one contact
+// is how a game ends up with its EOS in the one that does nothing, so an
+// eosSwitch is reported, and ignored.
+//
+// A dual-wound coil must not have a stop switch. Its contact hands over to the
+// hold winding inside the coil, and the board cutting the one output it has
+// would drop the flipper at the end of every stroke, then fire it again as the
+// finger falls - five times per press, then wait for a release.
+void ValidateEosFields(const YAML::Node& item, const std::string& itemPath) {
+  if (item["eosSwitch"]) {
+    printf(
+        "PPUC: WARNING: %s has 'eosSwitch', which is not used. An "
+        "end-of-stroke switch that should cut this output belongs in "
+        "'stopSwitches'. At %s.\n",
+        itemPath.c_str(), FormatYamlLocation(item["eosSwitch"].Mark()).c_str());
+  }
+  const bool dualWinding = item["dualWinding"] && item["dualWinding"].IsScalar() &&
+                           item["dualWinding"].as<std::string>() == "true";
+  const YAML::Node stops = item["stopSwitches"];
+  if (dualWinding && stops && stops.IsSequence() && stops.size() > 0) {
+    ThrowHardwareError(
+        item, itemPath,
+        "a dualWinding coil cannot have stopSwitches: its end-of-stroke "
+        "contact switches the windings itself, and cutting the output would "
+        "drop the flipper. A WPC Fliptronic flipper is a power winding with "
+        "stopSwitches plus a separate holdWinding, not a dualWinding coil");
+  }
+}
+
 std::string BoardLabel(uint8_t board, uint8_t type) {
   const char* name = ppuc::v2::BoardTypeName(type);
   return "board " + std::to_string(static_cast<unsigned>(board)) + " (" +
@@ -870,11 +904,10 @@ void ValidatePpucConfiguration(const YAML::Node& config) {
                           // WarnAboutUnprotectedSolenoids below.
                           ValidateOptionalField<bool>(
                               item, itemPath, "dualWinding");
-                          // The end-of-stroke contact, when it is wired back to
-                          // an input rather than only breaking the power
-                          // winding. Optional even for a dual-wound coil.
-                          ValidateOptionalField<uint32_t>(
-                              item, itemPath, "eosSwitch");
+                          // eosSwitch was metadata only and never reached a
+                          // board; the EOS that cuts a power winding is a stop
+                          // switch. See ValidateEosFields.
+                          ValidateEosFields(item, itemPath);
                           // Declares a coil that is the hold winding of a pair
                           // driven separately - WPC Fliptronic flippers, where
                           // the CPU drives power and hold as two outputs. A

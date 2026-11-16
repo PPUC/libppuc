@@ -100,7 +100,10 @@ Optional metadata parsed and exposed here:
   because the board registers the output when the type arrives and anything
   after it lands on the next output. Deliberately not counted as thermal
   protection: a stop switch can be unplugged or misadjusted, and WPC itself
-  paired one with a timeout rather than trusting it alone.
+  paired one with a timeout rather than trusting it alone. This is the only
+  place an EOS goes: `eosSwitch` is reported as unused and ignored (it never
+  reached a board), and a `dualWinding` coil with `stopSwitches` is refused,
+  because cutting its one output drops the flipper. See `ValidateEosFields()`.
 - `ignoreGameOn: true` on PWM outputs → the board's game-on gate does not apply
   to this coil or motor, sent as `CONFIG_TOPIC_IGNORE_GAME_ON` before
   `CONFIG_TOPIC_TYPE`. For what a ROM drives with no game running, such as Dirty
