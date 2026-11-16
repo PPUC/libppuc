@@ -285,6 +285,7 @@ const char* AnomalyName(RS485Comm::Anomaly kind) {
     case RS485Comm::Anomaly::QueueOverflow: return "output queue overflow";
     case RS485Comm::Anomaly::SessionResync: return "session resync";
     case RS485Comm::Anomaly::StaleSwitchReply: return "stale switch reply";
+    case RS485Comm::Anomaly::BoardSuspended: return "board suspended";
     default: return "unknown";
   }
 }
@@ -439,7 +440,10 @@ void RS485Comm::Run() {
         continue;
       }
 
-      if (m_needSessionResync) {
+      // See ResyncBackoff: a resync that keeps failing waits longer each
+      // time, and the machine runs on meanwhile.
+      if (m_needSessionResync &&
+          m_resyncBackoff.Allowed(std::chrono::steady_clock::now())) {
         if (!ResyncSession()) {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
           continue;
@@ -578,6 +582,10 @@ void RS485Comm::QueueEvent(Event* event) {
         }
         if (coilOn) {
           m_coilHoldFrames[it->second] = m_coilHoldFrameCount;
+          m_coilHoldUntil[it->second] =
+              std::chrono::steady_clock::now() +
+              std::chrono::milliseconds(static_cast<uint32_t>(m_coilHoldFrameCount) *
+                                        m_outputFrameIntervalMs);
         }
         QueueOutputSnapshotLocked();
         {
@@ -667,6 +675,9 @@ void RS485Comm::ClearOutputState() {
   std::lock_guard<std::mutex> lock(m_stateMutex);
   memset(m_coilBitmap, 0, sizeof(m_coilBitmap));
   memset(m_coilHoldFrames, 0, sizeof(m_coilHoldFrames));
+  for (auto& until : m_coilHoldUntil) {
+    until = std::chrono::steady_clock::time_point{};
+  }
   memset(m_lampBitmap, 0, sizeof(m_lampBitmap));
   memset(m_giLevels, 0, sizeof(m_giLevels));
 }
@@ -675,8 +686,9 @@ void RS485Comm::ApplyCoilHoldover(uint8_t* coils,
                                   const uint8_t* holdFrames) const {
   const uint16_t coilBits =
       std::min<uint16_t>(m_runtimeConfig.coilBits, ppuc::v2::kMaxCoilBits);
+  const auto now = std::chrono::steady_clock::now();
   for (uint16_t i = 0; i < coilBits; ++i) {
-    if (holdFrames[i] == 0) {
+    if (holdFrames[i] == 0 && now >= m_coilHoldUntil[i]) {
       continue;
     }
     ppuc::v2::SetBitmapBit(coils, i, true);
@@ -914,6 +926,8 @@ bool RS485Comm::Connect(const char* pDevice) {
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   m_needSessionResync = false;
+  m_resyncBackoff = ppuc::ResyncBackoff();
+  m_boardSuspension.Reset();
   m_epoch = 1;
   m_sequence = 0;
   m_lastOutputSequenceSent = 0;
@@ -1214,6 +1228,7 @@ PPUCBusHealth RS485Comm::GetBusHealth() const {
   health.sessionResyncsStarted = m_sessionResyncsStarted.load();
   health.framesLostTolerated = m_framesLostTolerated.load();
   health.staleSwitchReplies = m_staleSwitchReplies.load();
+  health.switchBoardSuspensions = m_switchBoardSuspensions.load();
   health.configAckRetries = m_configAckRetryCount.load();
   health.boardsLostConfiguration = m_boardsLostConfigurationCount.load();
   health.lastBoardLostConfiguration = m_lastBoardLostConfiguration.load();
@@ -1534,6 +1549,26 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
   bool hadState = false;
   uint8_t hops = 0;
   bool success = true;
+  // Whether `expected` got its token from a frame the host sent, the poll
+  // frame or one sent to pass a board over, rather than from the board before
+  // it. See SwitchReplyIsStale().
+  bool tokenFromHost = true;
+
+  // Hands the token to the board after `board` with a fresh poll frame, for
+  // when `board` did not answer or is suspended. Returns false at the end of
+  // the chain or if the frame could not be sent.
+  auto passOver = [this, &expected, &tokenFromHost](uint8_t board) -> bool {
+    const uint8_t after = GetLogicalNextSwitchBoard(board);
+    if (after == ppuc::v2::kNoBoard) {
+      return false;
+    }
+    if (!SendOutputStateFrame(after)) {
+      return false;
+    }
+    expected = after;
+    tokenFromHost = true;
+    return true;
+  };
 
   while (expected != ppuc::v2::kNoBoard && hops++ < RS485_COMM_MAX_BOARDS) {
     if (m_virtualSwitchBoards.find(expected) != m_virtualSwitchBoards.end()) {
@@ -1543,24 +1578,57 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
         break;
       }
       expected = next;
+      tokenFromHost = false;
       continue;
     }
 
-    // Only the board the poll frame named got its token from that frame.
-    const bool tokenFromPollFrame = hops == 1;
-    if (!ReceiveSwitchStateFrame(expected, &next, &hadState,
-                                 tokenFromPollFrame)) {
+    const auto now = std::chrono::steady_clock::now();
+    if (!m_boardSuspension.ShouldWait(expected, now) &&
+        !BoardStartsAnswering()) {
+      // Suspended and no probe due: do not wait out its window again.
+      if (!passOver(expected)) {
+        break;
+      }
+      continue;
+    }
+
+    if (!ReceiveSwitchStateFrame(expected, &next, &hadState, tokenFromHost)) {
       success = false;
-      break;
+      // Boards behind it may still be answering: they heard its token even
+      // though the host could not read it. Their replies must not be waiting
+      // in the buffer when the token moves on.
+      DrainInputUntilQuiet();
+      // Only a board that sent nothing at all for the whole window. One whose
+      // reply arrived garbled is alive: passed over while it still answers
+      // the token, it would collide with the host every chain.
+      if (m_lastReplyWasSilent && m_boardSuspension.NoteMiss(expected, now)) {
+        ++m_switchBoardSuspensions;
+        ReportAnomaly(Anomaly::BoardSuspended,
+                      "Board %u missed %u switch tokens in a row; it is now "
+                      "passed over and asked once per %lld ms until it "
+                      "answers",
+                      expected,
+                      static_cast<unsigned>(
+                          ppuc::SwitchBoardSuspension::kMissesToSuspend),
+                      static_cast<long long>(
+                          ppuc::SwitchBoardSuspension::kProbeInterval.count()));
+        // It may be silent because it is in another session, which only a
+        // resync puts right. ResyncBackoff keeps that from repeating.
+        m_needSessionResync = true;
+      }
+      // The boards after it were not polled because of it. They still are.
+      if (!passOver(expected)) {
+        break;
+      }
+      continue;
+    }
+
+    if (m_boardSuspension.NoteAnswer(expected)) {
+      ReportAnomaly(Anomaly::BoardSuspended, "Board %u answers again",
+                    expected);
     }
     expected = next;
-  }
-
-  if (!success) {
-    // Boards behind the one that failed may still be answering: they heard
-    // its token even though the host could not read it. Their replies must not
-    // be waiting in the buffer when the next chain starts.
-    DrainInputUntilQuiet();
+    tokenFromHost = false;
   }
 
   ++m_switchReplyChainCount;
@@ -1580,6 +1648,24 @@ void RS485Comm::ReceiveSwitchStateChain(uint8_t firstBoard) {
       m_needSessionResync = true;
     }
   }
+}
+
+// Whether a reply starts arriving within a short guard, without consuming
+// it. Before a suspended board is passed over: if it answers after all, the
+// host reads it rather than transmitting over it.
+bool RS485Comm::BoardStartsAnswering() {
+  if (m_pSerialPort == NULL) {
+    return false;
+  }
+  const auto until = std::chrono::steady_clock::now() +
+                     std::chrono::microseconds(RS485_COMM_SUSPENDED_BOARD_GUARD_US);
+  while (std::chrono::steady_clock::now() < until) {
+    if (sp_input_waiting(m_pSerialPort) > 0) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::microseconds(200));
+  }
+  return sp_input_waiting(m_pSerialPort) > 0;
 }
 
 // Reads and throws away whatever is still arriving, until the line has been
@@ -1684,21 +1770,37 @@ bool RS485Comm::ResyncSession() {
   }
   ReportAnomaly(Anomaly::SessionResync, "Starting V2 session resync epoch=%u",
                 m_epoch);
+  m_resyncBackoff.Note(std::chrono::steady_clock::now());
+  if (m_resyncBackoff.Level() > 0) {
+    ReportAnomaly(Anomaly::SessionResync,
+                  "The last resync did not help; the next waits %lld ms",
+                  static_cast<long long>(m_resyncBackoff.Delay().count()));
+  }
   if (!SendSetupFrame()) {
     return false;
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  if (!SendMappingFrames()) {
+  // Shorter than at startup: see RS485_COMM_RESYNC_SETUP_SETTLE_MS. It used
+  // to be the startup sequence, about 0.9 s on Dirty Harry with 5 ms per
+  // mapping frame, while the code said 0.4 s.
+  std::this_thread::sleep_for(
+      std::chrono::milliseconds(RS485_COMM_RESYNC_SETUP_SETTLE_MS));
+  if (!SendMappingFrames(RS485_COMM_RESYNC_MAPPING_SPACING_US)) {
     return false;
   }
   // Drop any stale switch replies that were still in flight from the previous
   // epoch before the runtime loop starts polling again.
   sp_flush(m_pSerialPort, SP_BUF_INPUT);
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  // The snapshots queued while nothing went out would follow each other at
+  // wire speed, a few milliseconds apart: lamps replaying the frozen stretch,
+  // coils firing late and short. The boards switched every coil off at the
+  // setup frame, so the current state is all they need; a pulse that came and
+  // went meanwhile still goes out, carried by the coil holdover.
+  ClearQueuedOutputSnapshots();
   m_needSessionResync = false;
   m_nextSwitchPollAt =
       std::chrono::steady_clock::now() +
-      std::chrono::milliseconds(RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS);
+      std::chrono::milliseconds(RS485_COMM_RESYNC_POLL_HOLD_MS);
   // A trigger from the old epoch was dropped by the boards; the flipper
   // enable goes out again in the new one.
   m_flipperEnableDue = true;
@@ -2190,15 +2292,15 @@ bool RS485Comm::SendSwitchRefreshFrame(uint8_t nextBoard) {
 }
 
 bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
-                                 uint16_t number) {
+                                 uint16_t number, uint32_t spacingUs) {
   if (m_pSerialPort == NULL) {
     return false;
   }
 
-  // Mapping bursts are large and immediately follow setup/cutover. Pace them
-  // like config frames so boards have time to switch from fallback RX to the
-  // steady-state V2 receive path without dropping frames.
-  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  // Mapping bursts are large and immediately follow setup/cutover. At startup
+  // they are paced like config frames so boards have time to switch from
+  // fallback RX to the steady-state V2 receive path without dropping frames.
+  std::this_thread::sleep_for(std::chrono::microseconds(spacingUs));
 
   uint8_t buffer[ppuc::v2::kMappingFrameBytes];
   ppuc::v2::BuildMappingFrame(buffer, ppuc::v2::kNoBoard, m_sequence++,
@@ -2207,20 +2309,22 @@ bool RS485Comm::SendMappingFrame(uint8_t domain, uint16_t index,
   return WriteBytes("MappingFrame", buffer, sizeof(buffer));
 }
 
-bool RS485Comm::SendMappingFrames() {
+bool RS485Comm::SendMappingFrames(uint32_t spacingUs) {
   for (uint16_t i = 0; i < m_coilIndexToNumber.size(); ++i) {
-    if (!SendMappingFrame(ppuc::v2::kDomainCoil, i, m_coilIndexToNumber[i])) {
+    if (!SendMappingFrame(ppuc::v2::kDomainCoil, i, m_coilIndexToNumber[i],
+                          spacingUs)) {
       return false;
     }
   }
   for (uint16_t i = 0; i < m_lampIndexToNumber.size(); ++i) {
-    if (!SendMappingFrame(ppuc::v2::kDomainLamp, i, m_lampIndexToNumber[i])) {
+    if (!SendMappingFrame(ppuc::v2::kDomainLamp, i, m_lampIndexToNumber[i],
+                          spacingUs)) {
       return false;
     }
   }
   for (uint16_t i = 0; i < m_switchIndexToNumber.size(); ++i) {
     if (!SendMappingFrame(ppuc::v2::kDomainSwitch, i,
-                          m_switchIndexToNumber[i])) {
+                          m_switchIndexToNumber[i], spacingUs)) {
       return false;
     }
   }
@@ -2336,6 +2440,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
                                         uint8_t* outNextBoard,
                                         bool* outHadState,
                                         bool tokenFromPollFrame) {
+  m_lastReplyWasSilent = false;
   if (m_pSerialPort == NULL ||
       !ppuc::v2::IsValidRuntimeConfig(m_runtimeConfig)) {
     return false;
@@ -2556,6 +2661,7 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
   if (sp_input_waiting(m_pSerialPort) <= 0) {
     sp_flush(m_pSerialPort, SP_BUF_INPUT);
   }
+  m_lastReplyWasSilent = !sawAnyReplyBytes;
   return false;
 }
 

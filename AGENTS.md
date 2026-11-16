@@ -261,14 +261,31 @@ selects the next responder; the chain ends at `kNoBoard`.
 
 - Sender identity is not verified beyond the chained `nextBoard` value, because
   frames carry no sender ID.
-- CRC failure aborts the receive chain for that cycle.
+- A board that does not answer no longer ends the chain. After a miss the host
+  drains the line and hands the token to the next board with a fresh poll
+  frame. A board that sent nothing at all for three tokens in a row is
+  suspended (`SwitchBoardSuspension` in `BusRecovery.h`): it is passed over,
+  after a 3 ms listen in case it answers after all, and asked once a second
+  until it does. Suspension also requests one resync, for a board silent
+  because it is in another epoch. A garbled reply never suspends a board: it
+  is alive, and passing it over would collide with it every chain.
+- Only the first board of a chain is judged stale by its sequence
+  (`SwitchReplyIsStale`), because only it got its token from the host.
 - Switch changes are edge-diffed against `m_switchBitmap` and exposed as queued
   `PPUCSwitchState` objects.
 - Replies carry status flags (`kStatusInSync`, `kStatusNeedsSetup`,
   `kStatusMappingIncomplete`, `kStatusSequenceGap`, `kStatusParserResynced`,
   `kStatusSwitchOverflow`) that feed the resync decision.
 - Session resync bumps `m_epoch` and re-sends setup/mapping instead of resetting
-  boards.
+  boards. A runtime resync paces mapping frames 1 ms apart, not the 5 ms of
+  startup, and settles 20 ms after setup instead of 100: on Dirty Harry that is
+  about 0.3 s instead of 0.9 s without outputs. It drops the output snapshots
+  queued meanwhile, which would otherwise go out back to back; a pulse that
+  came and went is still carried by the coil holdover, which now also lasts at
+  least `holdFrames x outputFrameIntervalMs` of wall time. Resyncs that do not
+  help back off (`ResyncBackoff`): the first goes at once, each further one
+  within 5 s doubles the wait from 0.5 s up to 8 s, and the machine keeps
+  running in between.
 
 ### Control-frame semantics to preserve
 

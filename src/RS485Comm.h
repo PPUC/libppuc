@@ -19,6 +19,7 @@
 
 #include "io-boards/PPUCProtocolV2.h"
 #include "PPUC_structs.h"
+#include "BusRecovery.h"
 #include "io-boards/Event.h"
 #include "libserialport.h"
 
@@ -49,6 +50,28 @@ static constexpr uint32_t RS485_COMM_DEFAULT_OUTPUT_FRAME_INTERVAL_MS = 4;
 #define RS485_COMM_EFFECT_EVENT_SPACING_US 1000
 #define RS485_COMM_SWITCH_REPLY_MISS_THRESHOLD 3
 #define RS485_COMM_SWITCH_POLL_STARTUP_HOLD_MS 250
+// A runtime resync's setup, mapping and poll hold. At startup the boards have
+// just been configured and change receive paths after setup, which is what
+// the long startup values are for; in a resync they are already running, and
+// every one of these milliseconds is one without outputs. A mapping frame is
+// 13 bytes, about 0.5 ms on the wire at 250000 baud, and the boards buffer
+// 512 bytes.
+#ifndef RS485_COMM_STARTUP_MAPPING_SPACING_US
+#define RS485_COMM_STARTUP_MAPPING_SPACING_US 5000
+#endif
+#ifndef RS485_COMM_RESYNC_MAPPING_SPACING_US
+#define RS485_COMM_RESYNC_MAPPING_SPACING_US 1000
+#endif
+#ifndef RS485_COMM_RESYNC_SETUP_SETTLE_MS
+#define RS485_COMM_RESYNC_SETUP_SETTLE_MS 20
+#endif
+// How long the host listens before passing over a suspended board.
+#ifndef RS485_COMM_SUSPENDED_BOARD_GUARD_US
+#define RS485_COMM_SUSPENDED_BOARD_GUARD_US 3000
+#endif
+#ifndef RS485_COMM_RESYNC_POLL_HOLD_MS
+#define RS485_COMM_RESYNC_POLL_HOLD_MS 50
+#endif
 // How often the flipper enable is repeated while board flippers are in use.
 #ifndef RS485_COMM_FLIPPER_ENABLE_REPEAT_MS
 #define RS485_COMM_FLIPPER_ENABLE_REPEAT_MS 1000
@@ -106,6 +129,7 @@ class RS485Comm {
     SessionResync,     // the host restarted the session
     UnmappedDevice,    // an output was addressed that no board claims
     StaleSwitchReply,  // a reply from an earlier chain was waiting in the buffer
+    BoardSuspended,    // a board stopped answering the switch token, or is back
     Count
   };
 
@@ -133,7 +157,10 @@ class RS485Comm {
   void SetMappings(const std::vector<uint16_t>& coils,
                    const std::vector<uint16_t>& lamps,
                    const std::vector<uint16_t>& switches);
-  bool SendMappingFrames();
+  // spacingUs between frames: generous at startup, where the boards switch
+  // receive paths right after setup, short in a runtime resync, where every
+  // millisecond is one without outputs.
+  bool SendMappingFrames(uint32_t spacingUs = RS485_COMM_STARTUP_MAPPING_SPACING_US);
   void SetConfiguredBoards(const std::vector<uint8_t>& boards);
   void SetSwitchNumbersByBoard(
       const std::unordered_map<uint8_t, std::vector<uint16_t>>& switchesByBoard);
@@ -276,6 +303,7 @@ class RS485Comm {
   bool ReceiveSwitchStateFrame(uint8_t expectedBoard, uint8_t* outNextBoard,
                                bool* outHadState, bool tokenFromPollFrame);
   void DrainInputUntilQuiet();
+  bool BoardStartsAnswering();
   bool SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
                               bool* outHadState);
   uint8_t GetLogicalNextSwitchBoard(uint8_t board) const;
@@ -286,7 +314,8 @@ class RS485Comm {
   void ApplySwitchBitmapDiff(uint8_t board, const uint8_t* bitmap, size_t bytes);
   void RebuildSwitchOwnershipMasks();
   void EnsureConfiguredBoardPresenceKnown();
-  bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number);
+  bool SendMappingFrame(uint8_t domain, uint16_t index, uint16_t number,
+                        uint32_t spacingUs);
   bool SendOutputStateFrameFromBuffers(uint8_t nextBoard, const uint8_t* coils,
                                        const uint8_t* lamps,
                                        const uint8_t* giLevels);
@@ -355,6 +384,10 @@ class RS485Comm {
 
   uint8_t m_coilBitmap[ppuc::v2::kMaxCoilBytes] = {0};
   uint8_t m_coilHoldFrames[ppuc::v2::kMaxCoilBits] = {0};
+  // And for at least as long as that many frames take at the normal rate.
+  // Counted in frames alone, a pulse shrank to a few milliseconds whenever
+  // queued frames went out back to back, after a resync or a stall.
+  std::chrono::steady_clock::time_point m_coilHoldUntil[ppuc::v2::kMaxCoilBits]{};
   uint8_t m_lampBitmap[ppuc::v2::kMaxLampBytes] = {0};
   uint8_t m_giLevels[ppuc::v2::kGiStrings] = {0};
   uint8_t m_switchBitmap[ppuc::v2::kMaxSwitchBytes] = {0};
@@ -481,6 +514,11 @@ class RS485Comm {
   // Frames a board missed that were left to the next snapshot to put right.
   std::atomic<uint32_t> m_framesLostTolerated{0};
   std::atomic<uint32_t> m_staleSwitchReplies{0};
+  std::atomic<uint32_t> m_switchBoardSuspensions{0};
+  // The last ReceiveSwitchStateFrame() timed out without a single byte.
+  bool m_lastReplyWasSilent = false;
+  ppuc::ResyncBackoff m_resyncBackoff;
+  ppuc::SwitchBoardSuspension m_boardSuspension;
   std::atomic<uint32_t> m_configAckRetryCount{0};
   std::atomic<uint32_t> m_configAckTimeoutCount{0};
   bool m_configFailed = false;

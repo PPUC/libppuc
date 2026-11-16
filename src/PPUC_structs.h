@@ -169,6 +169,10 @@ struct PPUCBusHealth {
   // taken for the board being polled. Each one says a chain was cut short
   // while boards behind the failing one were still answering.
   uint32_t staleSwitchReplies = 0;
+  // Times a board stopped answering the switch token for long enough to be
+  // passed over, and was from then on asked once a second. Non-zero says which
+  // problem it was: a board without power or a wire, not a busy bus.
+  uint32_t switchBoardSuspensions = 0;
 
   // A board reported that it needs setup while the game was running, which
   // means it restarted and lost its configuration. Distinct from a resync: a

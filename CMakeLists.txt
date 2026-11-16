@@ -213,6 +213,7 @@ if(BUILD_TESTS)
       tests/test_config_validation.cpp
       tests/test_switch_groups.cpp
       tests/test_switch_poll_priority.cpp
+      tests/test_bus_recovery.cpp
       tests/test_unmapped_devices.cpp
       tests/test_coil_gi_mappings.cpp
       tests/test_pwm_output.cpp
