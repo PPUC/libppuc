@@ -154,10 +154,13 @@ class PPUCAPI PPUC {
 
   // Each board's own transport counters, for diagnosing a board that stopped
   // answering. Safe to call at any time; it is an out-of-band admin exchange.
-  std::vector<PPUCBoardStats> QueryBoardStats();
+  // settleBus: wait out the line and flush it first, which is right after
+  // configuration. Pass false while the poll loop runs: the flush is not under
+  // the port lock and could take a switch reply the chain is still reading.
+  std::vector<PPUCBoardStats> QueryBoardStats(bool settleBus = true);
   // Every configured board's own counters, see PPUCBoardDiagnostics. A board
   // with firmware before 0.5.7 comes back with responded false.
-  std::vector<PPUCBoardDiagnostics> QueryBoardDiagnostics();
+  std::vector<PPUCBoardDiagnostics> QueryBoardDiagnostics(bool settleBus = true);
   // A PPUCBoardDiagnostics::values index in words, for the log.
   static const char* DiagnosticsFieldName(uint8_t field);
   // PPUCBoardStats::resetCause in words, for the log.

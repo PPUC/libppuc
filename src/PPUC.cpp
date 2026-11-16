@@ -2819,8 +2819,10 @@ void PPUC::LogBoardLastStarts() {
   }
 }
 
-std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {
-  m_pRS485Comm->SettleBusBeforeAdmin();
+std::vector<PPUCBoardStats> PPUC::QueryBoardStats(bool settleBus) {
+  if (settleBus) {
+    m_pRS485Comm->SettleBusBeforeAdmin();
+  }
   std::vector<PPUCBoardStats> stats;
 
   std::set<uint8_t> boards;
@@ -2840,8 +2842,10 @@ std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {
   return stats;
 }
 
-std::vector<PPUCBoardDiagnostics> PPUC::QueryBoardDiagnostics() {
-  m_pRS485Comm->SettleBusBeforeAdmin();
+std::vector<PPUCBoardDiagnostics> PPUC::QueryBoardDiagnostics(bool settleBus) {
+  if (settleBus) {
+    m_pRS485Comm->SettleBusBeforeAdmin();
+  }
   std::vector<PPUCBoardDiagnostics> diagnostics;
   const YAML::Node& configured = m_ppucConfig["boards"];
   if (!HasSequenceItems(configured)) {
