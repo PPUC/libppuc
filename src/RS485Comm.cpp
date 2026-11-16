@@ -2064,6 +2064,71 @@ PPUCBoardStats RS485Comm::QueryBoardStats(uint8_t board, uint32_t timeoutMs) {
   return result;
 }
 
+PPUCBoardDiagnostics RS485Comm::QueryBoardDiagnostics(uint8_t board,
+                                                       uint32_t timeoutMs) {
+  static_assert(ppuc::v2::kDiagnosticsFieldCount <=
+                    sizeof(PPUCBoardDiagnostics::values) / sizeof(uint32_t),
+                "PPUCBoardDiagnostics::values is too small");
+  AdminPortLock portLock(this);
+  PPUCBoardDiagnostics result;
+  result.board = board;
+  if (m_pSerialPort == NULL || !ppuc::v2::IsValidBoard(board)) {
+    return result;
+  }
+
+  sp_flush(m_pSerialPort, SP_BUF_INPUT);
+  uint8_t query[ppuc::v2::kDiagnosticsQueryFrameBytes];
+  ppuc::v2::BuildDiagnosticsQueryFrame(query, board, m_sequence++, m_epoch);
+  if (!WriteBytes("AdminDiagnosticsQuery", query, sizeof(query))) {
+    return result;
+  }
+
+  uint8_t frame[ppuc::v2::kDiagnosticsReportFrameBytes];
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  while (std::chrono::steady_clock::now() < deadline) {
+    uint8_t byte = 0;
+    if (sp_blocking_read(m_pSerialPort, &byte, 1, 5) <= 0 ||
+        byte != ppuc::v2::kSyncByte) {
+      continue;
+    }
+    frame[0] = byte;
+    const auto frameDeadline =
+        std::min(deadline, std::chrono::steady_clock::now() +
+                               std::chrono::milliseconds(
+                                   RS485_COMM_ADMIN_FRAME_ASSEMBLY_MS));
+    size_t got = 1;
+    while (got < sizeof(frame) &&
+           std::chrono::steady_clock::now() < frameDeadline) {
+      const int read = sp_blocking_read(m_pSerialPort, &frame[got],
+                                        sizeof(frame) - got,
+                                        RS485_COMM_SERIAL_READ_TIMEOUT);
+      if (read > 0) {
+        got += static_cast<size_t>(read);
+      }
+    }
+    if (got < sizeof(frame) ||
+        ppuc::v2::ExtractType(frame[1]) != ppuc::v2::kFrameAdmin ||
+        !ppuc::v2::VerifyCrc(frame, sizeof(frame))) {
+      continue;
+    }
+    const uint8_t* payload = &frame[ppuc::v2::kHeaderBytes];
+    if (payload[0] != ppuc::v2::kAdminDiagnosticsReport ||
+        payload[1] != board) {
+      continue;
+    }
+    uint32_t values[ppuc::v2::kDiagnosticsFieldCount];
+    ppuc::v2::ReadDiagnosticsReport(payload, values);
+    for (size_t i = 0; i < ppuc::v2::kDiagnosticsFieldCount; ++i) {
+      result.values[i] = values[i];
+    }
+    result.count = ppuc::v2::kDiagnosticsFieldCount;
+    result.responded = true;
+    return result;
+  }
+  return result;
+}
+
 bool RS485Comm::AwaitAdminReply(uint8_t board, uint8_t expectedCommand,
                                 uint8_t* status, uint32_t* offset,
                                 uint32_t timeoutMs) {

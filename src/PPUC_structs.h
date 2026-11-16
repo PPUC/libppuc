@@ -118,6 +118,17 @@ struct PPUCBoardStats {
   uint8_t resetCause = 0;
 };
 
+// What a board counted about itself, read out of band (firmware 0.5.7 and
+// later). values[] is indexed by ppuc::v2::DiagnosticsField and holds `count`
+// of them; PPUC::DiagnosticsFieldName() names each. loopMaxUs is since the
+// previous query, everything else since the board started.
+struct PPUCBoardDiagnostics {
+  uint8_t board = 0;
+  bool responded = false;
+  uint8_t count = 0;
+  uint32_t values[16] = {0};
+};
+
 struct PPUCBoardVersion {
   uint8_t board = 0;
   bool responded = false;

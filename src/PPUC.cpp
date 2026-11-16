@@ -2840,6 +2840,30 @@ std::vector<PPUCBoardStats> PPUC::QueryBoardStats() {
   return stats;
 }
 
+std::vector<PPUCBoardDiagnostics> PPUC::QueryBoardDiagnostics() {
+  m_pRS485Comm->SettleBusBeforeAdmin();
+  std::vector<PPUCBoardDiagnostics> diagnostics;
+  const YAML::Node& configured = m_ppucConfig["boards"];
+  if (!HasSequenceItems(configured)) {
+    return diagnostics;
+  }
+  std::set<uint8_t> boards;
+  for (YAML::Node board : configured) {
+    const uint8_t number = board["number"].as<uint8_t>();
+    if (m_skippedBoards.find(number) == m_skippedBoards.end()) {
+      boards.insert(number);
+    }
+  }
+  for (uint8_t board : boards) {
+    diagnostics.push_back(m_pRS485Comm->QueryBoardDiagnostics(board));
+  }
+  return diagnostics;
+}
+
+const char* PPUC::DiagnosticsFieldName(uint8_t field) {
+  return ppuc::v2::DiagnosticsFieldName(field);
+}
+
 std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions(uint32_t waitForBoardsMs) {
   m_pRS485Comm->SettleBusBeforeAdmin();
 

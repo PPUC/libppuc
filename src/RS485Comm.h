@@ -260,6 +260,10 @@ class RS485Comm {
   // Reads one board's transport counters. Diagnostics: run it after a test to
   // see whether a board that never answered had seen the frame at all.
   PPUCBoardStats QueryBoardStats(uint8_t board, uint32_t timeoutMs = 250);
+  // One attempt: firmware before 0.5.7 does not answer, and asking it three
+  // times would only hold up the shutdown.
+  PPUCBoardDiagnostics QueryBoardDiagnostics(uint8_t board,
+                                             uint32_t timeoutMs = 100);
 
   // Sends a firmware image to one board and asks it to install.
   //
