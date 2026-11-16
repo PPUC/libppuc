@@ -173,3 +173,32 @@ TEST_CASE("boardFlippers without any flipper winding is refused") {
   const auto error = LoadAndCaptureError(yaml);
   CHECK(error.find("no pwmOutput is a flipper winding") != std::string::npos);
 }
+
+TEST_CASE("a sling without a kick length is reported, a flipper is not") {
+  // The sling in FlipperConfig has minPulseTime 0; the flipper windings too.
+  TempYaml file(FlipperConfig(""));
+  const std::string out = CaptureStdout([&] {
+    PPUC ppuc;
+    ppuc.LoadConfiguration(file.path());
+  });
+  CHECK(out.find("'Left Sling', number 9) is fired by switch 61") !=
+        std::string::npos);
+  CHECK(out.find("Left Flipper Power', number 47) is fired") ==
+        std::string::npos);
+  CHECK(out.find("Left Flipper Hold', number 48) is fired") ==
+        std::string::npos);
+}
+
+TEST_CASE("a sling with a kick length is not reported") {
+  std::string yaml = FlipperConfig("");
+  const std::string sling = "    fastFlipSwitch: 61\n";
+  const auto at = yaml.rfind("    minPulseTime: 0\n", yaml.find(sling));
+  yaml.replace(at, std::string("    minPulseTime: 0\n").size(),
+               "    minPulseTime: 30\n");
+  TempYaml file(yaml);
+  const std::string out = CaptureStdout([&] {
+    PPUC ppuc;
+    ppuc.LoadConfiguration(file.path());
+  });
+  CHECK(out.find("is fired by switch") == std::string::npos);
+}

@@ -1130,6 +1130,7 @@ std::set<uint32_t> FlipperButtons(const YAML::Node& config);
 bool IsBoardFlipperOutput(const YAML::Node& item,
                           const std::set<uint32_t>& buttons);
 void ValidateBoardFlippers(const YAML::Node& config);
+void WarnAboutKicksWithoutLength(const YAML::Node& config);
 }  // namespace
 
 void PPUC::LoadConfiguration(const char* configFile) {
@@ -1139,6 +1140,7 @@ void PPUC::LoadConfiguration(const char* configFile) {
     ValidatePpucConfiguration(m_ppucConfig);
     WarnAboutUnprotectedSolenoids(m_ppucConfig);
     ValidateBoardFlippers(m_ppucConfig);
+    WarnAboutKicksWithoutLength(m_ppucConfig);
     m_switchGroups = ParseSwitchGroups(m_ppucConfig);
     m_coilGiMappings = ParseCoilGiMappings(m_ppucConfig);
   } catch (const YAML::Exception& e) {
@@ -1424,6 +1426,42 @@ void ValidateBoardFlippers(const YAML::Node& config) {
         "invalid YAML configuration: boardFlippers is set, but no pwmOutput "
         "is a flipper winding: a coil with a fastFlipSwitch and an EOS, a "
         "hold power, holdWinding or no maxPulseTime");
+  }
+}
+
+// A sling or a jet: a coil on a fast-flip switch that holds nothing.
+//
+// Since io-boards 0.5.5 the board kicks it for its minPulseTime from the
+// moment the switch closes, whatever the leaf does meanwhile. With 0 it uses
+// its own default, 30 ms, which is a guess that should not go unnoticed - so
+// it is reported. Before, the kick lasted as long as the switch read closed,
+// which a chattering leaf made the whole maxPulseTime.
+void WarnAboutKicksWithoutLength(const YAML::Node& config) {
+  const YAML::Node& pwmOutput = config["pwmOutput"];
+  if (!HasSequenceItems(pwmOutput)) {
+    return;
+  }
+  const std::set<uint32_t> buttons = FlipperButtons(config);
+  size_t index = 0;
+  for (const YAML::Node& item : pwmOutput) {
+    const std::string itemPath = "pwmOutput[" + std::to_string(index++) + "]";
+    if (ResolvePwmType(item["type"].as<std::string>()) != PWM_TYPE_SOLENOID) {
+      continue;
+    }
+    const uint32_t button = item["fastFlipSwitch"].as<uint32_t>();
+    if (button == 0 || buttons.count(button) != 0 ||
+        item["minPulseTime"].as<uint32_t>() > 0) {
+      continue;
+    }
+    const std::string description =
+        item["description"] ? item["description"].as<std::string>() : "";
+    printf(
+        "PPUC: WARNING: %s ('%s', number %u) is fired by switch %u on the "
+        "board but has no minPulseTime, which is its kick length; the board "
+        "uses 30 ms. At %s.\n",
+        itemPath.c_str(), description.c_str(),
+        static_cast<unsigned>(item["number"].as<uint32_t>()),
+        static_cast<unsigned>(button), FormatYamlLocation(item.Mark()).c_str());
   }
 }
 
