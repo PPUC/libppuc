@@ -734,8 +734,20 @@ void RS485Comm::Disconnect() {
   ClearQueuedEvents();
   ClearQueuedOutputSnapshots();
   ClearOutputState();
+  // Board flippers do not take orders from the output bitmap, so the all-off
+  // frames below leave them following their buttons. Say so explicitly,
+  // twice like the outputs; firmware 0.5.4 also times them out by itself.
+  const bool flippersWereManaged = m_flippersEnabled.exchange(-1) >= 0;
+  if (flippersWereManaged) {
+    Event flippersOff(EVENT_SOURCE_FLIPPER_ENABLE, 0, 0);
+    SendEvent(&flippersOff);
+  }
   SendOutputsOffFrame();
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  if (flippersWereManaged) {
+    Event flippersOff(EVENT_SOURCE_FLIPPER_ENABLE, 0, 0);
+    SendEvent(&flippersOff);
+  }
   SendOutputsOffFrame();
   sp_drain(m_pSerialPort);
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1632,7 +1644,12 @@ bool RS485Comm::SendVirtualSwitchReply(uint8_t board, uint8_t nextBoard,
 
 bool RS485Comm::ResyncSession() {
   ++m_sessionResyncsStarted;
+  // 0 is the epoch a board starts in after power-on, before any setup. A
+  // session in it would look to a freshly restarted board like its own.
   ++m_epoch;
+  if (m_epoch == 0) {
+    m_epoch = 1;
+  }
   ReportAnomaly(Anomaly::SessionResync, "Starting V2 session resync epoch=%u",
                 m_epoch);
   if (!SendSetupFrame()) {
