@@ -253,6 +253,16 @@ updates dedicated GI state, not the lamp bitmap. This matters because one
 addressable LED string may mix lamps, GI, and flashers, and those domains must
 stay independent in transport.
 
+GI **colors** are separate again: `SetGiColorProgram(string, colors, effect,
+periodMs)` (custom games color the GI with their modes) resolves the call
+(`ResolveGiColorProgram`: static with a color the string is configured with
+means the default, one color or period 0 is static, at most four colors) and
+hands it to `RS485Comm::SetGiProgram`. `GiProgramTable` keeps one program per
+string and what is due; the run loop broadcasts each change once as io-boards
+`kAdminGiProgram` (25 bytes) and again after every session resync. Nothing is
+sent unless every board that answered `QueryBoardVersions()` runs firmware
+0.5.9 or later. Covered by `tests/test_gi_programs.cpp`.
+
 ### Switch polling and token ring
 
 `ReceiveSwitchStateChain()` expects a `SwitchStateFrame` or

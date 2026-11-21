@@ -20,6 +20,7 @@
 #include "io-boards/PPUCProtocolV2.h"
 #include "PPUC_structs.h"
 #include "BusRecovery.h"
+#include "GiPrograms.h"
 #include "io-boards/Event.h"
 #include "libserialport.h"
 
@@ -148,6 +149,16 @@ class RS485Comm {
   // at once, again after every session resync and about once a second, so a
   // board that lost it - a restart, a lost frame - has it back quickly.
   void SetFlippersEnabled(bool enabled);
+  // A GI string's color program, see GiProgramTable and io-boards
+  // kAdminGiProgram. Sent by the run loop once per change, and again after a
+  // session resync. False when it changes nothing.
+  bool SetGiProgram(const ppuc::v2::GiProgram& program);
+  // Cleared when a board runs firmware that does not know the GI program
+  // command (before 0.5.9): it would resync its parser on every one.
+  void SetGiProgramsSupported(bool supported) {
+    m_giProgramsSupported = supported;
+  }
+  bool GiProgramsSupported() const { return m_giProgramsSupported.load(); }
   bool SendConfigEvent(ConfigEvent* configEvent);
   void SetRuntimeConfig(const ppuc::v2::RuntimeConfig& config);
   bool SendSetupFrame();
@@ -538,5 +549,10 @@ class RS485Comm {
   std::atomic<int> m_flippersEnabled{-1};
   std::atomic<bool> m_flipperEnableDue{false};
   std::chrono::steady_clock::time_point m_nextFlipperEnableAt{};
+  std::mutex m_giProgramMutex;
+  ppuc::GiProgramTable m_giPrograms;
+  std::atomic<bool> m_giProgramsDue{false};
+  std::atomic<bool> m_giProgramsSupported{true};
+  void SendDueGiPrograms();
   bool m_boardPresenceFinalized = false;
 };

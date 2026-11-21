@@ -463,6 +463,10 @@ void RS485Comm::Run() {
         }
       }
 
+      if (m_giProgramsDue.load()) {
+        SendDueGiPrograms();
+      }
+
       const auto now = std::chrono::steady_clock::now();
       uint8_t nextBoard = ppuc::v2::kNoBoard;
       if (m_switchBoardCounter > 0 && now >= m_nextSwitchPollAt) {
@@ -941,6 +945,13 @@ bool RS485Comm::Connect(const char* pDevice) {
          sizeof(m_initialConfigAckMissesByBoard));
   m_configEarlyAbortBoard = ppuc::v2::kNoBoard;
   m_configAckFailedBoards.clear();
+  {
+    // The boards are restarted before they are configured, which puts every
+    // GI string back to its configured colors.
+    std::lock_guard<std::mutex> lock(m_giProgramMutex);
+    m_giPrograms.Reset();
+    m_giProgramsDue = false;
+  }
 
   return true;
 }
@@ -1804,6 +1815,12 @@ bool RS485Comm::ResyncSession() {
   // A trigger from the old epoch was dropped by the boards; the flipper
   // enable goes out again in the new one.
   m_flipperEnableDue = true;
+  // So was a GI program. A board that has it already keeps it running.
+  {
+    std::lock_guard<std::mutex> lock(m_giProgramMutex);
+    m_giPrograms.MarkSentDue();
+    m_giProgramsDue = m_giPrograms.AnyDue();
+  }
   return true;
 }
 
@@ -2733,6 +2750,52 @@ bool RS485Comm::ReceiveSwitchStateFrame(uint8_t expectedBoard,
 void RS485Comm::SetFlippersEnabled(bool enabled) {
   m_flippersEnabled = enabled ? 1 : 0;
   m_flipperEnableDue = true;
+}
+
+bool RS485Comm::SetGiProgram(const ppuc::v2::GiProgram& program) {
+  if (!ppuc::v2::IsValidGiProgram(program)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(m_giProgramMutex);
+  if (!m_giPrograms.Set(program)) {
+    return false;
+  }
+  m_giProgramsDue = true;
+  return true;
+}
+
+// Broadcast: the host does not need to know which board carries a string, and
+// one frame reaches them all. Unanswered, so no token and no reply window.
+void RS485Comm::SendDueGiPrograms() {
+  if (!m_giProgramsSupported.load() || m_pSerialPort == NULL) {
+    return;
+  }
+  while (true) {
+    ppuc::v2::GiProgram program;
+    {
+      std::lock_guard<std::mutex> lock(m_giProgramMutex);
+      if (!m_giPrograms.TakeDue(program)) {
+        m_giProgramsDue = false;
+        return;
+      }
+    }
+    uint8_t frame[ppuc::v2::kGiProgramFrameBytes];
+    ppuc::v2::BuildGiProgramFrame(frame, ppuc::v2::kNoBoard, m_sequence++,
+                                  m_epoch, program);
+    if (m_debug) {
+      DebugPrintf("GI program string=%u effect=%u colors=%u period=%u",
+                  static_cast<unsigned>(program.string),
+                  static_cast<unsigned>(program.effect),
+                  static_cast<unsigned>(program.colorCount),
+                  static_cast<unsigned>(program.periodMs));
+    }
+    if (!WriteBytes("GI program frame", frame, sizeof(frame))) {
+      // Not lost: it goes out with the next pass.
+      std::lock_guard<std::mutex> lock(m_giProgramMutex);
+      m_giPrograms.MarkSentDue();
+      return;
+    }
+  }
 }
 
 bool RS485Comm::SendEvent(Event* event) {

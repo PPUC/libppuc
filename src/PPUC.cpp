@@ -23,6 +23,10 @@
 
 namespace {
 
+// The first io-boards firmware that knows kAdminGiProgram, as
+// PPUCBoardVersion::FirmwareOrdinal() orders versions.
+constexpr uint32_t kGiProgramFirmwareOrdinal = (0u << 16) | (5u << 8) | 9u;
+
 std::string FormatYamlLocation(const YAML::Mark& mark) {
   if (mark.is_null()) {
     return "unknown location";
@@ -1187,6 +1191,26 @@ void PPUC::LoadConfiguration(const char* configFile) {
     // Default unknown platforms to non-WPC behavior so features like
     // always-on GI do not silently disappear on older systems.
     m_platform = PLATFORM_SYS11;
+  }
+
+  for (auto& colors : m_configuredGiColors) {
+    colors.clear();
+  }
+  if (HasSequenceItems(m_ppucConfig["ledStripes"])) {
+    for (const YAML::Node& stripe : m_ppucConfig["ledStripes"]) {
+      if (!HasSequenceItems(stripe["gi"])) {
+        continue;
+      }
+      for (const YAML::Node& led : stripe["gi"]) {
+        const uint32_t number = led["number"].as<uint32_t>();
+        if (number >= 1 && number <= ppuc::v2::kGiStrings) {
+          m_configuredGiColors[number - 1].insert(
+              ParseRequiredHexColorField(
+                  led, "color", ConfigItemContext(led, "ledStripes.gi")) &
+              0xFFFFFF);
+        }
+      }
+    }
   }
 
   m_boardFlipperCoils.clear();
@@ -2746,6 +2770,99 @@ void PPUC::SetGIState(int string, int brightness) {
       ppuc::v2::ClampGiLevel(giBrightness)));
 }
 
+static_assert(+PPUC_GI_EFFECT_DEFAULT == +ppuc::v2::kGiEffectDefault &&
+                  +PPUC_GI_EFFECT_STATIC == +ppuc::v2::kGiEffectStatic &&
+                  +PPUC_GI_EFFECT_CYCLE == +ppuc::v2::kGiEffectCycle &&
+                  +PPUC_GI_EFFECT_FADE == +ppuc::v2::kGiEffectFade,
+              "PPUCGiEffect must match the wire values");
+
+int PPUC::GiEffectFromName(const std::string& name) {
+  if (name == "default") return PPUC_GI_EFFECT_DEFAULT;
+  if (name == "static") return PPUC_GI_EFFECT_STATIC;
+  if (name == "cycle") return PPUC_GI_EFFECT_CYCLE;
+  if (name == "fade") return PPUC_GI_EFFECT_FADE;
+  return -1;
+}
+
+const std::set<uint32_t>& PPUC::GetConfiguredGiColors(int string) const {
+  static const std::set<uint32_t> kNone;
+  if (string < 1 || string > ppuc::v2::kGiStrings) {
+    return kNone;
+  }
+  return m_configuredGiColors[string - 1];
+}
+
+bool PPUC::ResolveGiColorProgram(int string,
+                                 const std::vector<uint32_t>& colors,
+                                 uint8_t effect, uint16_t periodMs,
+                                 PPUCGiProgram& out) const {
+  if (string < 1 || string > ppuc::v2::kGiStrings ||
+      effect > PPUC_GI_EFFECT_FADE) {
+    return false;
+  }
+  out = PPUCGiProgram();
+  out.string = static_cast<uint8_t>(string);
+  for (uint32_t color : colors) {
+    if (out.colors.size() == ppuc::v2::kGiProgramMaxColors) {
+      break;
+    }
+    out.colors.push_back(color & 0xFFFFFF);
+  }
+  out.effect = effect;
+  out.periodMs = periodMs;
+
+  // One color, or no time to spend on each, is just that color.
+  if (out.effect != PPUC_GI_EFFECT_DEFAULT &&
+      (out.colors.size() == 1 || out.periodMs == 0)) {
+    out.effect = PPUC_GI_EFFECT_STATIC;
+  }
+  if (out.effect == PPUC_GI_EFFECT_STATIC) {
+    out.colors.resize(std::min<size_t>(out.colors.size(), 1));
+    out.periodMs = 0;
+    // A game asks for the configured color when no colored mode runs: that
+    // is the default, which puts back each LED's own color.
+    if (!out.colors.empty() &&
+        GetConfiguredGiColors(string).count(out.colors[0]) > 0) {
+      out.colors.clear();
+    }
+  }
+  if (out.colors.empty()) {
+    out.effect = PPUC_GI_EFFECT_DEFAULT;
+  }
+  if (out.effect == PPUC_GI_EFFECT_DEFAULT) {
+    out.colors.clear();
+    out.periodMs = 0;
+  }
+  return true;
+}
+
+bool PPUC::SetGiColorProgram(int string, const std::vector<uint32_t>& colors,
+                             uint8_t effect, uint16_t periodMs) {
+  PPUCGiProgram resolved;
+  if (!ResolveGiColorProgram(string, colors, effect, periodMs, resolved)) {
+    return false;
+  }
+  if (!m_pRS485Comm->GiProgramsSupported()) {
+    if (!m_giProgramsRefusedLogged) {
+      m_giProgramsRefusedLogged = true;
+      printf(
+          "PPUC: GI color programs need io-boards firmware 0.5.9 on every "
+          "board; the GI keeps its configured colors\n");
+    }
+    return false;
+  }
+  ppuc::v2::GiProgram program;
+  program.string = resolved.string;
+  program.effect = resolved.effect;
+  program.periodMs = resolved.periodMs;
+  program.colorCount = static_cast<uint8_t>(resolved.colors.size());
+  for (size_t i = 0; i < resolved.colors.size(); ++i) {
+    program.colors[i] = resolved.colors[i];
+  }
+  m_pRS485Comm->SetGiProgram(program);
+  return true;
+}
+
 void PPUC::SetSwitchState(int number, int state) {
   m_pRS485Comm->SetVirtualSwitchState(static_cast<uint16_t>(number),
                                       state == 0 ? 0 : 1);
@@ -2908,9 +3025,19 @@ std::vector<PPUCBoardVersion> PPUC::QueryBoardVersions(uint32_t waitForBoardsMs)
 
   std::vector<PPUCBoardVersion> versions;
   versions.reserve(answers.size());
+  // A board on firmware before 0.5.9 does not know the GI program command and
+  // resyncs its parser on every one, which it reports in its switch replies.
+  // One such board is enough to keep them off the bus. A board that did not
+  // answer cannot say, and does not count.
+  bool giProgramsSupported = true;
   for (uint8_t board : boards) {
     versions.push_back(answers[board]);
+    const PPUCBoardVersion& v = answers[board];
+    if (v.responded && v.FirmwareOrdinal() < kGiProgramFirmwareOrdinal) {
+      giProgramsSupported = false;
+    }
   }
+  m_pRS485Comm->SetGiProgramsSupported(giProgramsSupported);
   return versions;
 }
 

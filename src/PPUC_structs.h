@@ -118,6 +118,24 @@ struct PPUCBoardStats {
   uint8_t resetCause = 0;
 };
 
+// GI color programs, see PPUC::SetGiColorProgram(). Values are those of
+// io-boards' ppuc::v2::GiEffect, which is what goes on the wire.
+enum PPUCGiEffect : uint8_t {
+  PPUC_GI_EFFECT_DEFAULT = 0,  // the configured colors of each LED
+  PPUC_GI_EFFECT_STATIC = 1,   // the first color
+  PPUC_GI_EFFECT_CYCLE = 2,    // hard switch to the next color every period
+  PPUC_GI_EFFECT_FADE = 3,     // cross-fade to the next color over each period
+};
+
+// A GI color program as PPUC::ResolveGiColorProgram() makes it out, which is
+// what goes to the boards.
+struct PPUCGiProgram {
+  uint8_t string = 0;
+  uint8_t effect = PPUC_GI_EFFECT_DEFAULT;
+  uint16_t periodMs = 0;
+  std::vector<uint32_t> colors;  // 0xRRGGBB, at most 4
+};
+
 // What a board counted about itself, read out of band (firmware 0.5.7 and
 // later). values[] is indexed by ppuc::v2::DiagnosticsField and holds `count`
 // of them; PPUC::DiagnosticsFieldName() names each. loopMaxUs is since the

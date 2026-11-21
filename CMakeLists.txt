@@ -112,6 +112,7 @@ set(PPUC_SOURCES
    src/PPUC.h
    src/PPUC.cpp
    src/PPUC_structs.h
+   src/GiPrograms.h
 )
 
 set(PPUC_INCLUDE_DIRS
@@ -221,6 +222,7 @@ if(BUILD_TESTS)
       tests/test_board_flippers.cpp
       tests/test_reset_cause.cpp
       tests/test_protocol_conformance.cpp
+      tests/test_gi_programs.cpp
       third-party/include/io-boards/ProtocolConformance.cpp
    )
 

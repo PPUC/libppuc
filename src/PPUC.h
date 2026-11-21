@@ -122,6 +122,33 @@ class PPUCAPI PPUC {
   bool IsBoardFlipperCoil(uint16_t number) const;
   void SetFlippersEnabled(bool enabled);
   void SetGIState(int string, int brightness);
+
+  // GI color programs, for custom games whose modes have colors. The boards
+  // render the program on the WS2812 LEDs of the string and keep scaling it
+  // with SetGIState(); it is sent once per change (one 25-byte frame), and
+  // again after a session resync. Needs io-boards firmware 0.5.9 on every
+  // board, and a GI string wired as one LED segment.
+  //
+  // colors are 0xRRGGBB, highest priority first; past four only the first
+  // four are used. effect is a PPUCGiEffect. periodMs is the time per color
+  // for cycle and fade. These mean the configured colors again (the
+  // default): PPUC_GI_EFFECT_DEFAULT, an empty color list, or "static" with a
+  // color that some LED of the string is configured with - which is what a
+  // game says when no colored mode runs. One color is static whatever the
+  // effect, and so is a period of 0.
+  //
+  // False when the string or effect is out of range, or the boards' firmware
+  // does not know the command (logged once); the GI then keeps its colors.
+  bool SetGiColorProgram(int string, const std::vector<uint32_t>& colors,
+                         uint8_t effect, uint16_t periodMs);
+  // What SetGiColorProgram() makes of its arguments. False if out of range.
+  bool ResolveGiColorProgram(int string, const std::vector<uint32_t>& colors,
+                             uint8_t effect, uint16_t periodMs,
+                             PPUCGiProgram& out) const;
+  // "default", "static", "cycle", "fade"; -1 for anything else.
+  static int GiEffectFromName(const std::string& name);
+  // The colors the GI LEDs of a string are configured with, 0xRRGGBB.
+  const std::set<uint32_t>& GetConfiguredGiColors(int string) const;
   void SetSwitchState(int number, int state);
   void TriggerEvent(uint8_t source, int number, int value);
   bool IsSwitchVirtualized(int number);
@@ -193,6 +220,8 @@ class PPUCAPI PPUC {
   std::vector<PPUCSwitch> m_switches;
   std::vector<PPUCCoilGiMapping> m_coilGiMappings;
   std::vector<uint16_t> m_boardFlipperCoils;
+  std::set<uint32_t> m_configuredGiColors[5];
+  bool m_giProgramsRefusedLogged = false;
   std::unordered_map<std::string, std::vector<uint16_t>> m_switchGroups;
 
   bool m_debug = false;
