@@ -1104,9 +1104,6 @@ std::vector<PPUCCoilGiMapping> ParseCoilGiMappings(const YAML::Node& config) {
 }  // namespace
 
 PPUC::PPUC() {
-  m_rom = (char*)malloc(16);
-  m_serial = (char*)malloc(128);
-
   m_pRS485Comm = new RS485Comm();
 }
 
@@ -1158,10 +1155,10 @@ void PPUC::LoadConfiguration(const char* configFile) {
   m_debug = ReadRequiredYamlField<bool>(m_ppucConfig, "debug", rootContext);
   std::string c_rom =
       ReadRequiredYamlField<std::string>(m_ppucConfig, "rom", rootContext);
-  strcpy(m_rom, c_rom.c_str());
+  m_rom = c_rom;
   std::string c_serial = ReadRequiredYamlField<std::string>(
       m_ppucConfig, "serialPort", rootContext);
-  strcpy(m_serial, c_serial.c_str());
+  m_serial = c_serial;
   std::string c_platform = ReadRequiredYamlField<std::string>(
       m_ppucConfig, "platform", rootContext);
   m_platform = PLATFORM_WPC;
@@ -1300,13 +1297,13 @@ uint8_t PPUC::GetConfiguredBoardType(uint8_t board) {
   return ppuc::v2::kBoardTypeUnknown;
 }
 
-void PPUC::SetRom(const char* rom) { strcpy(m_rom, rom); }
+void PPUC::SetRom(const char* rom) { m_rom = rom ? rom : ""; }
 
-const char* PPUC::GetRom() { return m_rom; }
+const char* PPUC::GetRom() { return m_rom.c_str(); }
 
-void PPUC::SetSerial(const char* serial) { strcpy(m_serial, serial); }
+void PPUC::SetSerial(const char* serial) { m_serial = serial ? serial : ""; }
 
-const char* PPUC::GetSerial() { return m_serial; }
+const char* PPUC::GetSerial() { return m_serial.c_str(); }
 
 bool PPUC::AbortConfigurationEarly() const {
   return m_pRS485Comm->ShouldAbortConfigurationEarly();
@@ -1781,7 +1778,7 @@ bool PPUC::Connect() {
     return false;
   }
 
-  if (!m_pRS485Comm->Connect(m_serial)) {
+  if (!m_pRS485Comm->Connect(m_serial.c_str())) {
     return false;
   }
 

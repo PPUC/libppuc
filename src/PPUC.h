@@ -24,6 +24,7 @@
 
 #include <functional>
 #include <set>
+#include <string>
 #include <unordered_map>
 
 class RS485Comm;
@@ -225,8 +226,8 @@ class PPUCAPI PPUC {
   std::unordered_map<std::string, std::vector<uint16_t>> m_switchGroups;
 
   bool m_debug = false;
-  char* m_rom;
-  char* m_serial;
+  std::string m_rom;
+  std::string m_serial;
   uint8_t m_platform;
   uint8_t m_coinDoorClosedSwitch;
   // Logs why each board last started, read before startup restarts them.
